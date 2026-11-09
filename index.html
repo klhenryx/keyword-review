@@ -19,7 +19,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-57Kv5m8pd28NqN6FyGCLxcjBwDOszZLZx0H4BW17uAE='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-0IDSEYdZpI5YEINfMFGxDEf9SQd4pnnQBJT4Rizvjsg='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="color-scheme" content="dark">
 <meta name="referrer" content="no-referrer">
 <meta name="google" content="notranslate">
@@ -1539,6 +1539,8 @@ function pctMeaning(m){
   if (/plan pays|percentage|reimburse|benefit level|covered at|payable at|paid at|plan payment/.test(ctx)) return "plan";
   return "either";   // "20% coinsurance" in one document, "80% coinsurance" in another
 }
+// A section for one service ("PREVENTIVE CARE", "THERAPY SERVICES"), not a table for the whole plan ("PLAN COSTS", "OFFICE PLAN").
+const SERVICE_SEC = /\bservices?\b|\bcare\b|therap|imaging|diagnostic|training|surg|hospital|facilit|maternity|vision|hearing|dental|preventive|emergency|ambulance|transplant|mental|behavioral|chiropract|rehab|nursing|hospice|equipment|supplies|prescription|pharmacy|laborator|x-ray|telehealth|infertil|bariatric/;
 function checkCoins(f){
   const planPct = Math.round((100 - f.member) * 100) / 100;
   let cands = byNet(mentionsIn(activeSections().filter(s => REIMB.test(s.tn)), "pct"), f.net);
@@ -1554,8 +1556,7 @@ function checkCoins(f){
   const hit = cands.find(fits);
   // With no reimbursement section for the plan, a match in a section for one service says where it was found
   // ("Office | 80% after deductible" under preventive care). A plan-wide table ("PLAN COSTS", "OFFICE PLAN") needs no note.
-  const PLANWIDE = /\bplans?\b|costs?|benefits?|coinsurance|summary|overview|schedule|start of document|deductible|out[- ]of[- ]pocket/;
-  if (hit && noStd && !PLANWIDE.test(hit.sec.tn)) return Object.assign(ok(hit), { plainNote: true, note: "Found in " + hit.sec.title + ". The Benefit Summary has no standard reimbursement section for this plan." });
+  if (hit && noStd && SERVICE_SEC.test(hit.sec.tn)) return Object.assign(ok(hit), { plainNote: true, note: "Found in " + hit.sec.title + ". The Benefit Summary has no standard reimbursement section for this plan." });
   if (hit) return ok(hit);
   // Not in the reimbursement sections: a benefit paid at that level elsewhere ("Office | 100%, deductible waived").
   // Sections about claims handling, not benefits, don't count ("pay the balance up to 100% of the Allowable Charges").
@@ -1577,11 +1578,12 @@ function checkCoins(f){
   if (hit3) return Object.assign(ok(hit3), { status: "partial", note: "The Benefit Summary lists this on the \u201c" + hit3.row.label + "\u201d row, which doesn't say in or out of network. Check that this keyword is for that row." });
   // A keyword that pays in full is often for one service paid at 100% (preventive care), not the plan's usual level.
   const full = f.member === 0;
-  // weak: the Benefit Summary has no reimbursement section for this, so the percentages it does list are for other services.
-  return { status: "mismatch", unsure: full, weak: noStd, sec: cands[0].sec, row: cands[0].row, found: fmtList(cands.map(m => m.v).sort((a, b) => b - a), x => x + "%"), hl: { bad: "pct" },
+  // weak: no reimbursement section, and every percentage it lists is in a section for one service.
+  return { status: "mismatch", unsure: full, weak: noStd && cands.every(m => SERVICE_SEC.test(m.sec.tn)), sec: cands[0].sec, row: cands[0].row, found: fmtList(cands.map(m => m.v).sort((a, b) => b - a), x => x + "%"), hl: { bad: "pct" },
     note: full ? "The keyword pays this at 100%, which isn't one of the coinsurance levels in the Benefit Summary. Check whether this keyword is for a service that is paid in full." : "" };
 }
-const COPAY_HINTS = [[/^OV|OFFIC|PCP|SPEC|PHYS/, /^(?!.*(emergency|\ber\b|urgent)).*(office|pcp|primary care|specialist|e&m|physician)/], [/^ER|EMERG/, /emergency|\ber\b/],
+// The first entry is the usual office copay; a counter whose name says no service is read as that one.
+const COPAY_HINTS = [[/^OV|OFFIC|PCP|PHYS/, /^(?!.*(emergency|\ber\b|urgent)).*(office|pcp|primary care|specialist|e&m|physician)/], [/SPEC/, /speciali[sz]|specialty/], [/^ER|EMERG/, /emergency|\ber\b/],
   [/^UC|URG/, /urgent/], [/^RX|DRUG|GENER|BRAND/, /drug|prescription|generic|brand|formulary/], [/TELE/, /tele|virtual/], [/CHIRO/, /chiro/], [/^DIAB/, /diabet/],
   [/^OP(CO?PA?Y|COPY|CPY)|^OUTP/, /outpatient/], [/^IP(CO?PA?Y|COPY|CPY)|^INP/, /inpatient|per admi/]];
 // How often a copay is taken: the Benefit Summary's words next to the amount against the keyword's copay counter.
@@ -1637,8 +1639,9 @@ function checkCopay(f, g){
   }
   // weak: none of the copays listed is for this counter's service. A counter whose name doesn't say the service
   // ("POSCOPAY") is taken as the usual office copay, so only copays for other services count as weak (a telehealth copay).
-  const svcOf = m => m.ph + " " + m.row.labelN + " " + m.sec.tn;
-  const weak = hint ? !cands.some(m => hint.test([m.ph, m.cellN, m.hdrN, m.row.labelN, m.row.n].join(" ")) || hint.test(m.sec.tn))
+  // The table's own header counts ("Emergency Room with emergency diagnosis | Copay applies").
+  const svcOf = m => m.ph + " " + m.row.labelN + " " + (m.row.hdrText || "") + " " + m.sec.tn;
+  const weak = hint ? !cands.some(m => hint.test([m.ph, m.cellN, m.hdrN, m.row.labelN, m.row.n, m.row.hdrText || ""].join(" ")) || hint.test(m.sec.tn))
     : cands.every(m => !COPAY_HINTS[0][1].test(svcOf(m)) && COPAY_HINTS.slice(1).some(([, h]) => h.test(svcOf(m))));
   const hit = cands.find(m => eq(m.v, f.amount));
   if (hit) {
@@ -1975,16 +1978,27 @@ function checkLimit0(f, g, sec){
 }
 // The Benefit Summary comes first. When it doesn't have this, the cost share grid's column for the package is checked.
 // When the Benefit Summary says something different, the grid can't settle it: a person checks which is right.
+// A mismatch only against lines for other services (a telehealth copay for an office visit counter, preventive
+// percentages for the plan's coinsurance) isn't sure, so it goes to Review and says what was found.
 function checkSummaryThenGrid(f, g){
+  const r = checkSummaryThenGrid0(f, g);
+  if (r.status !== "mismatch" || !r.weak) return r;
+  const where = r.sec ? " (" + r.found.replace(/^Copays listed: /, "") + " in " + r.sec.title + ")" : "";
+  return Object.assign({}, r, { status: "partial", plainNote: false, unsure: false, note: f.type === "coins"
+    ? "The Benefit Summary has no standard reimbursement section for this plan. The percentages it lists are for other services" + where + ". Check this against the plan's cost shares."
+    : "The Benefit Summary has no copay for the service this counter is for. The copays it lists are for other services" + where + ". Check this against the plan's cost shares." });
+}
+function checkSummaryThenGrid0(f, g){
   const r = checkFact(f, g);
   if (r.status === "guideline" && state.ppacaGrid && f.type === "limit") return checkPpaca(f, g, r);
-  if (r.status === "match" || f.type === "limit" || f.type === "info" || !state.ws || !state.ws.sections.some(s => s.grid)) return r;
+  if (r.status === "match" || f.type === "limit" || f.type === "info" || state.scoring || !state.ws || !state.ws.sections.some(s => s.grid)) return r;
   let r2; state.withGrid = true;
   try { r2 = checkFact(f, g); } finally { state.withGrid = false; }
   if (!r2.sec || !r2.sec.grid) return r;
   const silent = r.status === "notstated" || r.status === "unlinked" || (r.status === "mismatch" && r.weak);
   // Only the grid has this, and it says something different: that's the mismatch to show.
-  if (r2.status !== "match") return silent ? Object.assign({}, r2, { note: ((r2.note || "") + " The Benefit Summary doesn't list this, so the cost share grid was used.").trim() }) : r;
+  // A grid mismatch against another service's row (no row for this one) isn't, so the Benefit Summary's result stands.
+  if (r2.status !== "match") return silent && !(r2.status === "mismatch" && r2.weak) ? Object.assign({}, r2, { note: ((r2.note || "") + " The Benefit Summary doesn't list this, so the cost share grid was used.").trim() }) : r;
   if (silent) return Object.assign({}, r2, { plainNote: true, note: "The Benefit Summary doesn't list this. The cost share grid does." });
   if (r.status === "partial") return Object.assign({}, r, { plainNote: false, note: (r.note ? r.note + " " : "") + "The cost share grid lists it for this package." });
   return Object.assign({}, r2, { status: "partial", plainNote: false, found: r.found,
@@ -2069,13 +2083,17 @@ function pickPlan(){
   if (!plans.length) return "";
   let best = plans[0], bestScore = -1;
   state.planScores = {};
-  for (const p of plans) {
-    state.plan = p;
-    let score = 0;
-    for (const g of state.groups) if (g.fact.type === "accum" || g.fact.type === "ded") { evaluateGroup(g); if (g.status === "match") score++; }
-    state.planScores[p] = score;
-    if (score > bestScore) { bestScore = score; best = p; }
-  }
+  // Plans are scored on the Benefit Summary's own amounts: the cost share grid would match every plan the same.
+  state.scoring = true;
+  try {
+    for (const p of plans) {
+      state.plan = p;
+      let score = 0;
+      for (const g of state.groups) if (g.fact.type === "accum" || g.fact.type === "ded") { evaluateGroup(g); if (g.status === "match") score++; }
+      state.planScores[p] = score;
+      if (score > bestScore) { bestScore = score; best = p; }
+    }
+  } finally { state.scoring = false; }
   return best;
 }
 function evaluateAll(){
@@ -2089,11 +2107,16 @@ function evaluateAll(){
   if (col && state.ws.plans.length >= 2) {
     // The cost share grid names each package's plan ("$2,000 Non-Union Traditional - tr"). Use the Benefit Summary's
     // plan with the same name. When it has none, its plan tables are all left out and the grid's column is used.
+    // The Benefit Summary's own package list wins over the grid's names.
+    const own = pkgs[pk] && state.ws.plans.includes(pkgs[pk]) ? pkgs[pk] : "";
     const words = p => planWords(state.ws.planLabels[p] || p);
     Object.entries(state.costGrid.packages).forEach(([c, v]) => { const m = state.ws.plans.find(p => words(p) === planWords(v.label)); if (m && !pkgs[c]) pkgs[c] = m; });
     state.ws.packages = pkgs;
     const same = state.ws.plans.filter(p => words(p) === planWords(col.label));
-    if (same.length === 1) { state.plan = same[0]; state.planWhy = "grid"; }
+    if (own) { state.plan = own; state.planWhy = "package"; }
+    else if (same.length === 1) { state.plan = same[0]; state.planWhy = "grid"; }
+    // Two plans with the grid's name ("Union Core HDHP" and "Union Core PPO" read the same): the one whose amounts fit best.
+    else if (same.length > 1) { pickPlan(); const sc = state.planScores || {}; state.plan = same.slice().sort((x, y) => (sc[y] || 0) - (sc[x] || 0))[0]; state.planWhy = "grid"; }
     else { state.plan = "~" + pk; state.planWhy = "grid-none"; }
   }
   else if (pk && pkgs[pk] && state.ws.plans.includes(pkgs[pk])) {
@@ -2928,8 +2951,13 @@ if (typeof DecompressionStream === "undefined") $("#note").textContent = "This b
 // Every release: raise APP_VERSION by .1, set APP_DATE, and add a CHANGELOG entry at the top.
 // The page can't contact anything, so checking for an update reloads it fresh from GitHub
 // and then shows What's new, marking what changed since the version that was open.
-const APP_VERSION = "1.1", APP_DATE = "Nov 9, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
+const APP_VERSION = "1.2", APP_DATE = "Nov 9, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
 const CHANGELOG = [
+  { v: "1.2", date: "Nov 9, 2026", items: [
+    "A copay or coinsurance only compared to lines for other services now goes to Review instead of Mismatch, with a note saying what was found (for example an office visit copay when the Benefit Summary only lists a telehealth copay).",
+    "Specialist copay counters are only compared to specialist copay lines, not primary care.",
+    "When the cost share grid has no row for a service, its rows for other services aren't used for it.",
+    "When the Benefit Summary itself names the plan for the benefit package, that wins over the cost share grid's plan names."] },
   { v: "1.1", date: "Nov 9, 2026", items: [
     "What's new box: opens after every update check and from the What's new button."] },
   { v: "1.0", date: "Nov 9, 2026", items: [
@@ -2957,6 +2985,7 @@ function showWhatsNew(was){
   const updated = was && newerThan(APP_VERSION, was);
   $("#wnStatus").textContent = was == null ? "You're on version " + APP_VERSION + "."
     : updated ? "Updated to version " + APP_VERSION + " (was " + was + "). The changes marked New are since your last version."
+    : newerThan(was, APP_VERSION) ? "GitHub sent an older copy (" + APP_VERSION + ") than the one you had (" + was + "). Wait a minute and check again."
     : "You're on the latest version (" + APP_VERSION + ").";
   $("#wnList").classList.toggle("since", !!updated);
   $("#wnList").innerHTML = CHANGELOG.map(r => {
