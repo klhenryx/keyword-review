@@ -19,7 +19,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-0IDSEYdZpI5YEINfMFGxDEf9SQd4pnnQBJT4Rizvjsg='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-V4XcCMpfs0ccDU7fsnh9QzsxeH7mKuZkPrWX5Xq57N4='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="color-scheme" content="dark">
 <meta name="referrer" content="no-referrer">
 <meta name="google" content="notranslate">
@@ -73,6 +73,8 @@
   .mark svg{width:18px;height:18px}
   .badge{margin-left:auto;display:flex;align-items:center;gap:9px;font:600 13px var(--mono);color:var(--muted);border:1px solid var(--line);background:rgba(13,18,27,.7);padding:8px 14px;border-radius:999px}
   .upd{padding:8px 14px;font-size:13.5px;border-radius:999px}
+  .linkbtn{display:block;margin-top:10px;padding:0;background:none;border:0;color:var(--muted);font:500 13px var(--body);text-decoration:underline;cursor:pointer}
+  .linkbtn:hover{color:var(--text)}
   .toast{position:fixed;top:84px;right:32px;z-index:60;max-width:420px;padding:12px 16px;border-radius:12px;background:var(--panel-2);border:1px solid var(--line-2);color:var(--text);
     font:500 14.5px var(--body);box-shadow:0 12px 40px rgba(0,0,0,.45);opacity:0;transform:translateY(-8px);pointer-events:none;transition:opacity .25s,transform .25s}
   .toast.show{opacity:1;transform:none}
@@ -785,7 +787,8 @@ function prepWorksheet(raw, name){
       if (r.table !== headerTable) { header = null; headerTable = r.table; }
       if (r.para) continue;
       // A label with its answer ("Subject to Deductible: | _X__ Yes ____ No") is not a heading.
-      const looksHeader = r.usable && !r.inGroup && r.content.length >= 2 && !r.checked && !r.box && !/\d/.test(r.text) &&
+      // Nor is a limit written in words ("Benefit Limits | Twice per year").
+      const looksHeader = r.usable && !r.inGroup && r.content.length >= 2 && !r.checked && !r.box && !/\d/.test(r.text) && !countNums(r.n).length &&
         r.content.every(c => c.t.length <= 60 && !/\?\s*$/.test(c.t)) && COLWORD.test(r.n) &&
         !/:\s*$/.test(r.content[0].t) && !r.content.some(c => /_{2,}|(^|\s)(yes|no)(\s|$)/i.test(c.t));
       if (looksHeader) { r.header = true; header = {}; r.content.forEach(c => { for (let k = 0; k < c.span; k++) header[c.c + k] = c.t; }); continue; }
@@ -1411,6 +1414,8 @@ function statedPeriods(n){
   const out = [];
   if (WINDOW_RE.test(n)) { out.push({ kind: "initial" }); n = n.replace(WINDOW_RE, " "); }
   WINDOW_RE.lastIndex = 0;
+  // "when no other screening has been provided in the preceding 12 months" is a condition, not the limit's period.
+  n = n.replace(/\b(?:in|within|during)\s+(?:the\s+)?(?:preceding|previous|prior)\s+(?:\d+|one|two|three|six|twelve)\s+(?:calendar\s+)?(?:days?|weeks?|months?|years?)\b/g, " ");
   if (/life ?time|\bper life\b|\bin life\b/.test(n)) out.push({ kind: "life" });
   if (/\b(per|each|a) pregnancy\b|\bprenatal care\b|\bduring (the |a )?pregnancy\b|\bper birth(?: event)?\b/.test(n)) out.push({ kind: "pregnancy" });
   // "10 hours first year; then two additional hours every calendar year": the first year is a one-time allotment.
@@ -1448,9 +1453,10 @@ function samePeriod(x, p){
   // A plan year is not a calendar year; only compare when both say which one.
   if (x.basis && p.basis && x.basis !== p.basis && !(p.basis === "rolling" && p.kind === "months")) return false;
   if (p.kind === "years") return (x.kind === "years" && x.n === p.n) || (x.kind === "months" && x.n === p.n * 12);
-  if (p.kind === "months") return (x.kind === "months" && x.n === p.n) || (x.kind === "years" && p.n % 12 === 0 && x.n === p.n / 12);
+  // "Every 30 days" is a month.
+  if (p.kind === "months") return (x.kind === "months" && x.n === p.n) || (x.kind === "years" && p.n % 12 === 0 && x.n === p.n / 12) || (x.kind === "days" && x.n === p.n * 30);
   if (p.kind === "weeks") return (x.kind === "weeks" && x.n === p.n) || (x.kind === "days" && x.n === p.n * 7);
-  return (x.kind === "days" && x.n === p.n) || (x.kind === "weeks" && x.n * 7 === p.n);
+  return (x.kind === "days" && x.n === p.n) || (x.kind === "weeks" && x.n * 7 === p.n) || (x.kind === "months" && x.n * 30 === p.n);
 }
 function periodState(n, p){
   const st = statedPeriods(n);
@@ -1641,7 +1647,9 @@ function checkCopay(f, g){
   // ("POSCOPAY") is taken as the usual office copay, so only copays for other services count as weak (a telehealth copay).
   // The table's own header counts ("Emergency Room with emergency diagnosis | Copay applies").
   const svcOf = m => m.ph + " " + m.row.labelN + " " + (m.row.hdrText || "") + " " + m.sec.tn;
-  const weak = hint ? !cands.some(m => hint.test([m.ph, m.cellN, m.hdrN, m.row.labelN, m.row.n, m.row.hdrText || ""].join(" ")) || hint.test(m.sec.tn))
+  // A specialist visit is an office visit: with one office copay for everyone, a different specialist copay is a mismatch.
+  const isFor = (h, m) => h.test([m.ph, m.cellN, m.hdrN, m.row.labelN, m.row.n, m.row.hdrText || ""].join(" ")) || h.test(m.sec.tn);
+  const weak = hint ? !cands.some(m => isFor(hint, m)) && !(/SPEC/.test(f.counter) && cands.some(m => isFor(COPAY_HINTS[0][1], m)))
     : cands.every(m => !COPAY_HINTS[0][1].test(svcOf(m)) && COPAY_HINTS.slice(1).some(([, h]) => h.test(svcOf(m))));
   const hit = cands.find(m => eq(m.v, f.amount));
   if (hit) {
@@ -1699,7 +1707,7 @@ const FIRST_EACH = /\bfirst\s+(?:[a-z/&()-]+\s+){0,3}?(?:each|every|per)\s+(?:pl
 // "Visit limit: 25", "maximum of 25" (unit before the number)
 const COUNT_REV = /\b(visits?|days?|sessions?|treatments?)\s+(?:limit|maximum|max)\b\s*(?:of|:|-|is)?\s*(\d[\d,]*)(?![\d,.]*\s*%)/g;
 // "once every three (3) calendar years" is one per three years.
-const ONCE_EVERY = /\bonce\s+(?:in\s+)?(?:every|per|each|a|an)\b/;
+const ONCE_EVERY = /\bonce\s+(?:in\s+)?(?:every|per|each|a|an|during)\b/;
 const N_EVERY = new RegExp("(?<![\\d$.,])\\b(\\d+|" + Object.keys(WORDNUM).join("|") + ")(?![\\d%])\\s+(?:every|per|each)\\s+(?:(?:\\d+|" + Object.keys(WORDNUM).join("|") + ")\\s+)?(?:calendar\\s+|plan\\s+|benefit\\s+|rolling\\s+)?(?:years?|months?)\\b", "g");
 const unparen = n => n.replace(/\b([a-z]+)\s*\((\d+)\)/g, (m, w, d) => WORDNUM[w] === +d ? d : m);
 // "More than one basic level obstetrical ultrasound ... is not covered" is a limit of one.
@@ -1714,8 +1722,9 @@ function countNums(n){
   for (const m of n.matchAll(N_EVERY)) { const v = /\d/.test(m[1]) ? num(m[1]) : WORDNUM[m[1]]; if (!isNaN(v) && !out.some(x => x.n === v)) out.push({ n: v, unit: "per" }); }
   const mt = MORE_THAN.exec(n); if (mt) out.push({ n: /\d/.test(mt[1]) ? num(mt[1]) : WORDNUM[mt[1]], unit: "per" });
   for (const m of n.matchAll(COUNT_RE)) {
-    // "Single per calendar year" names a coverage tier, not a count.
-    if (!/\d/.test(m[1]) && !(m[1] in WORDNUM) && m[3] === "per") continue;
+    // "Single per calendar year" names a coverage tier, not a count. Single, double, triple and dozen only count right
+    // before what they count ("a single visit"), not in "double lumen catheter procedures" or "single day surgery".
+    if (!/\d/.test(m[1]) && !(m[1] in WORDNUM) && (m[0].trim().split(/[\s-]+/).length !== 2 || /^(per|days?|hours?|units?|procedures?|surger)/.test(m[3]))) continue;
     const v = /\d/.test(m[1]) ? num(m[1]) : COUNTNUM[m[1]];
     if (!isNaN(v)) out.push({ n: v, unit: m[3] });
   }
@@ -1791,11 +1800,11 @@ function lenState(seg, p){
 const labelPeriod = (seg, r, p) => !!(r && statedPeriods(seg).length && statedPeriods(seg).every(x => x.kind === "event") && periodState(r.labelN, p) === "same");
 function numPeriods(ph, f, r){
   const st = seg => { if (!f.period) return "unstated"; const x = lenState(seg, f.period); return x === "differs" && labelPeriod(seg, r, f.period) ? "same" : x; };
-  const whole = () => textNums(ph, f, r).map(n => ({ n: +n, st: st(ph) }));
+  const whole = () => textNums(ph, f, r).map(n => ({ n: +n, st: st(ph), per: statedPeriods(ph)[0] }));
   if (f.dollars || uniq(textNums(ph, f, r)).length < 2) return whole();
-  const n2 = unparen(ph), cuts = [...n2.matchAll(COUNT_RE)].map(m => m.index);
+  const n2 = unparen(ph), cuts = uniq([...n2.matchAll(COUNT_RE)].map(m => m.index).concat([...n2.matchAll(/\b(?:once|twice)\b/g)].map(m => m.index))).sort((a, b) => a - b);
   if (cuts.length < 2) return whole();
-  return cuts.flatMap((c, i) => { const seg = n2.slice(i ? c : 0, i + 1 < cuts.length ? cuts[i + 1] : n2.length); return textNums(seg, f, r).map(n => ({ n: +n, st: st(seg) })); });
+  return cuts.flatMap((c, i) => { const seg = n2.slice(i ? c : 0, i + 1 < cuts.length ? cuts[i + 1] : n2.length); return textNums(seg, f, r).map(n => ({ n: +n, st: st(seg), per: statedPeriods(seg)[0] })); });
 }
 // Clear when exactly one number is given for the keyword's time period, or, with no period stated, exactly one number.
 function clearIn(pairs, f){
@@ -1876,14 +1885,20 @@ function checkLimit0(f, g, sec){
       return { status: "mismatch", unsure: !sure, sec: s, row: r, link, found: uniq(countWords(ph, f, r)).join(", "), hl: { bad: f.dollars ? "money" : "plain" }, note: sure ? "The Benefit Summary gives a different amount for this service." : "" };
     }
     if (!hits.length) continue;
-    let best = null, bestState = "", bestPh = "";
+    let best = null, bestState = "", bestPh = "", bestSaid = null;
     const rank = { same: 0, unstated: 1, differs: 2 };
     for (const h of hits) {
       let st = periodState(h.ph, f.period);
       if (st === "unstated") st = periodState(periodText(h.r, h.ph), f.period);
       // "Calendar Year Maximum: | $2000 per accident": the label gives the period; per accident says what it covers.
       if (st === "differs" && labelPeriod(h.ph, h.r, f.period)) { st = "same"; h.evLabel = true; }
-      if (!best || rank[st] < rank[bestState]) { best = h.r; bestState = st; bestPh = h.ph; }
+      // "two visits per week, 25 visits per year": the period written after a number is that number's,
+      // so 25 per week is not what this says.
+      if (st === "same" && f.period) {
+        const own = numPeriods(h.ph, f, h.r).filter(x => eq(x.n, f.amount));
+        if (own.length && own.every(x => x.st === "differs")) { st = "differs"; h.said = own[0].per; }
+      }
+      if (!best || rank[st] < rank[bestState]) { best = h.r; bestState = st; bestPh = h.ph; bestSaid = h.said; }
     }
     const loose = tier !== tier1 && tier !== named;
     // Days and visits count the same; one pair of contact lenses counts as 2. Say so, but it's a match.
@@ -1931,7 +1946,7 @@ function checkLimit0(f, g, sec){
       unitNote = (unitNote ? unitNote + " " : "") + "The Benefit Summary says per trip. Keywords can't count per trip, so per day is the same.";
     if (bestState === "same") return { status: "match", sec: s, row: best, hl: hlx, link, note: unitNote, plainNote: true };
     if (bestState === "unstated") return { status: "match", sec: s, row: best, hl: hlx, link, note: (unitNote ? unitNote + " " : "") + "The Benefit Summary doesn't state a time period for this.", plainNote: true };
-    const said = statedPeriods(bestPh)[0] || statedPeriods(periodText(best, bestPh))[0];
+    const said = bestSaid || statedPeriods(bestPh)[0] || statedPeriods(periodText(best, bestPh))[0];
     return { status: "partial", sec: s, row: best, hl, link, note: "The amount matches, but the Benefit Summary says " + describePeriod(said) + "." };
   }
   // The amount written as a cap in another line of the section ("Routine Adult Care / 100% up to $250 per Calendar Year").
@@ -2019,7 +2034,7 @@ function evaluateGroup(g){
   // A table under a plan heading the cover doesn't tie to any benefit package ("SALARIED PLAN" when the cover names only
   // the Office and Field plans): when only that table has the amount, a person decides which plan it is for.
   if (r.status === "notstated" && state.plan && f.type !== "limit" && f.type !== "info") {
-    const mapped = new Set(Object.values(state.ws.packages || {}));
+    const mapped = new Set(Object.values(state.pkgMap || state.ws.packages || {}));
     const loose = mapped.size ? state.ws.plans.filter(p => !mapped.has(p) && p !== state.plan) : [];
     for (const u of loose) {
       const keep = state.plan; let r2;
@@ -2027,6 +2042,15 @@ function evaluateGroup(g){
       if (r2.status === "match") { r = Object.assign({}, r2, { status: "partial", plainNote: false,
         note: "Found only under " + (state.ws.planLabels[u] || u) + ", which the cover doesn't tie to a benefit package. Check which plan that table is for." }); break; }
     }
+  }
+  // Nothing ties the export to one of the Benefit Summary's plans, so every plan's tables were used. A Match or a
+  // Mismatch from one plan's own table isn't sure: it may be another plan's amount.
+  if (!state.plan && !state.scoring && state.ws.plansFromHeadings && state.ws.plans.length >= 2 && (r.status === "match" || r.status === "mismatch") &&
+      r.sec && !r.sec.grid && !r.sec.ppaca && (r.sec.plan || (r.sec.plans && r.sec.plans.length))) {
+    const lab = (r.sec.plans && r.sec.plans.length ? r.sec.plans : [r.sec.plan]).map(p => state.ws.planLabels[p] || p.toUpperCase()).join(" and ");
+    r = Object.assign({}, r, { status: "partial", plainNote: false, unsure: false,
+      note: (r.status === "match" ? "This matches the table for " : "This was compared to the table for ") + lab +
+        ", but the tool doesn't know which plan this export is for. Load the cost share grid in box 3, or check that this is the right plan's table." });
   }
   finishGroup(g, r);
 }
@@ -2100,8 +2124,9 @@ function evaluateAll(){
   if (!state.ws || !state.kw) { $("#results").style.display = "none"; return; }
   // Compare only to the plan this export belongs to: by benefit package when the Benefit Summary lists it,
   // otherwise the plan whose amounts fit best. There is no switching to another plan.
-  const pk = exportPackage(), pkgs = state.ws.packages || {};
-  state.planWhy = ""; state.pkgWarn = "";
+  // pkgs starts as the Benefit Summary's own package list; the cost share grid's names are added to this copy only.
+  const pk = exportPackage(), pkgs = Object.assign({}, state.ws.packages || {});
+  state.planWhy = ""; state.pkgWarn = ""; state.pkgMap = pkgs;
   const col = state.costGrid && pk ? state.costGrid.packages[pk] : null;
   const fit = col && state.ws.plans.length >= 2 ? "" : pickPlan();
   if (col && state.ws.plans.length >= 2) {
@@ -2111,7 +2136,6 @@ function evaluateAll(){
     const own = pkgs[pk] && state.ws.plans.includes(pkgs[pk]) ? pkgs[pk] : "";
     const words = p => planWords(state.ws.planLabels[p] || p);
     Object.entries(state.costGrid.packages).forEach(([c, v]) => { const m = state.ws.plans.find(p => words(p) === planWords(v.label)); if (m && !pkgs[c]) pkgs[c] = m; });
-    state.ws.packages = pkgs;
     const same = state.ws.plans.filter(p => words(p) === planWords(col.label));
     if (own) { state.plan = own; state.planWhy = "package"; }
     else if (same.length === 1) { state.plan = same[0]; state.planWhy = "grid"; }
@@ -2531,12 +2555,17 @@ function parsePpacaGrid(sheets, name){
 // and "every two years" with no count before it is once every two years.
 const ppacaFreq = t => t.replace(/(:)?\s+(\d{1,2})\)\s+/g, (w, colon, d) => (colon ? ": " : "; ") + d + ") ").replace(/\b(?:allowed\s+)?(?:once\s+)?(?:annually|on an annual basis)\b/gi, "once per year").replace(/^annual\.?$/i, "once per year")
   .replace(/\bevery\b/gi, (w, at, all) => /\b(once|twice|one|two|three|four|five|six|\d+|times?)\s+(?:[a-z]+\s+){0,2}$/i.test(all.slice(Math.max(0, at - 30), at)) ? w : "once every");
+// "There are 5 covered screening services: 1) FIT annually; 2) ... 5) colonoscopy every 10 years" is one frequency per
+// numbered item, so each item is its own line. The lead-in before "1)" isn't a frequency.
+const ppacaParts = t => { const parts = t.split(/\s+(?=\d{1,2}\)\s)/);
+  return parts.length < 3 ? [t] : parts.slice(/^\d{1,2}\)\s/.test(parts[0]) ? 0 : 1).map(x => x.replace(/[\s;,]*(?:\b(?:or|and)\b)?[\s;,]*$/i, "")); };
 function ppacaSection(m){
   if (m.sec !== undefined) return m.sec;
-  const rows = m.freqs.map(t => ({ cells: [{ t: ppacaFreq(t), c: 0, span: 1 }], table: 0, para: true }));
+  const texts = m.freqs.flatMap(ppacaParts);
+  const rows = texts.map(t => ({ cells: [{ t: ppacaFreq(t.replace(/^\d{1,2}\)\s+/, "")), c: 0, span: 1 }], table: 0, para: true }));
   const sec = rows.length ? prepOwn([{ title: "PREVENTIVE MEASURE " + m.n, rows }])[0] || null : null;
   if (sec) sec.title = "PPACA grid: " + m.short;
-  if (sec && sec.rows.length === m.freqs.length) sec.rows.forEach((r, i) => { r.text = m.freqs[i]; });
+  if (sec && sec.rows.length === texts.length) sec.rows.forEach((r, i) => { r.text = texts[i]; });
   if (sec) Object.assign(sec, { id: "ppaca:" + m.n, ppaca: true, lines: sec.rows.filter(r => r.usable && !r.header).map((r, i) => Object.assign({}, sec, { id: "ppaca:" + m.n + ":" + i, rows: [r] })) });
   return (m.sec = sec || null);
 }
@@ -2560,29 +2589,52 @@ function checkPpaca(f, g, r0){
       : "The keyword names point to PPACA Measure " + nums.join(" or ") + ", which isn't in the PPACA grid. Check which measure this is." });
   }
   const say = t => String(t || "").replace(/\bthe Benefit Summary\b/g, "the PPACA grid").replace(/\bThe Benefit Summary\b/g, "The PPACA grid");
-  const rank = { match: 0, partial: 1, mismatch: 2 };
-  let best = null, bm = null;
-  // Each frequency line is for some of the measure's codes, so a line that agrees is a match. When none does,
-  // the whole measure is compared so the mismatch lists every frequency it gives.
-  for (const m of found) {
-    const sec = ppacaSection(m);
-    if (!sec) continue;
-    for (const one of sec.lines) {
-      const r = checkLimit(f, g, one);
-      if (r.status !== "match" && r.status !== "partial") continue;
-      if (!best || rank[r.status] < rank[best.status]) { best = Object.assign({}, r, { sec }); bm = m; }
-    }
+  const all = found.flatMap(m => { const sec = ppacaSection(m); return sec ? sec.lines.map(one => ({ m, sec, one, row: one.rows[0] })) : []; });
+  if (!all.length) return Object.assign({}, r0, { note: "The PPACA grid's " + found.map(m => m.short).join(" and ") + " doesn't give a frequency to compare." });
+  const { lines, picked } = ppacaLines(f, all);
+  // 1) A line that agrees.
+  const rank = { match: 0, partial: 1 };
+  let best = null, bl = null, others = 0;
+  for (const l of lines) {
+    const r = checkLimit(f, g, l.one);
+    if (r.status !== "match") others++;
+    if (r.status in rank && (!best || rank[r.status] < rank[best.status])) { best = r; bl = l; }
   }
-  if (!best) for (const m of found) {
-    const sec = ppacaSection(m);
-    if (!sec) continue;
-    const r = checkLimit(f, g, sec);
-    if (r.status in rank && (!best || rank[r.status] < rank[best.status])) { best = r; bm = m; }
+  if (best && best.status === "match") return Object.assign({}, best, { sec: bl.sec, plainNote: true, note: "Matches the PPACA grid, " + bl.m.short + "." +
+    (others ? " The measure lists other frequencies for other codes, and this is the line that matches." : "") + (best.note ? " " + say(best.note) : "") });
+  // 2) Every line for this service gives a clear frequency and none is the keyword's: a mismatch.
+  //    Clear means each count has its time period beside it. The same count for a year that only differs by
+  //    calendar or rolling isn't clear, so that stays a Review.
+  //    Wording with steps or conditions ("at first prenatal visit ... then annually thereafter") isn't clear either.
+  const STEPS = /\b(then|thereafter|first|initial|at least|after|following|unless|until|before|when|if|may|more|except|additional)\b/;
+  // A bare "once" ("allowed once for this measure, twice during pregnancy") is a count the tool didn't pair with a period.
+  const eachHasPeriod = n => uniq(countNums(n).map(x => x.n)).length <= statedPeriods(n).length && !(/\bonce\b/.test(n) && !ONCE_EVERY.test(n));
+  const entries = lines.map(l => STEPS.test(unparen(l.row.n).replace(/\([^)]*\)/g, " ")) || !eachHasPeriod(l.row.n) ? [] : l.row.n.split(SENT_SPLIT).flatMap(sn => numPeriods(sn, f, l.row)));
+  if (f.period && entries.every(e => e.length && e.every(x => x.st !== "unstated") && !e.some(x => eq(x.n, f.amount) && x.st === "same")))
+    return { status: "mismatch", sec: lines[0].sec, row: lines[0].row, link: { sec: lines[0].sec, how: "ppaca" }, found: uniq(lines.map(l => l.row.text)).join(" / "), hl: { bad: "plain" }, plainNote: false,
+      note: "The PPACA grid gives a different frequency for " + lines[0].m.short + "." };
+  // 3) Not clear enough to call: a person compares them.
+  if (best) return Object.assign({}, best, { sec: bl.sec, plainNote: false, note: "PPACA grid, " + bl.m.short + ": " + say(best.note) });
+  return { status: "partial", sec: lines[0].sec, row: lines[0].row, link: { sec: lines[0].sec, how: "ppaca" }, plainNote: false,
+    note: "PPACA grid, " + lines[0].m.short + ": the frequency wording isn't clear enough for the tool to decide. Compare them side by side." };
+}
+// Which of a measure's frequency lines are for this counter. A line names its service at the start
+// ("Flexible sigmoidoscopy, every 5 years OR every 10 years when combined with annual FIT" is the sigmoidoscopy line).
+const PPACA_KINDS = [[/PUMP/, /\bpumps?\b/], [/FEED|LACT/, /consult|lactation|counsel/], [/COUN/, /counsel/]];
+function ppacaLines(f, lines){
+  const head = l => l.row.n.slice(0, 45);
+  const mine = PPACA_KINDS.filter(([re]) => re.test(f.counter)).map(x => x[1]);
+  const hint = (SERVICE_HINTS.find(([re]) => re.test(f.counter)) || [])[1];
+  for (const re of mine.concat(hint ? [hint] : [])) {
+    const own = lines.filter(l => re.test(head(l)));
+    if (own.length) return { lines: own, picked: true };
+    const any = lines.filter(l => re.test(l.row.n));
+    if (any.length) return { lines: any, picked: true };
   }
-  if (!best) return Object.assign({}, r0, { note: "The PPACA grid's " + found.map(m => m.short).join(" and ") + " doesn't give a frequency to compare." });
-  if (best.status === "match") return Object.assign({}, best, { plainNote: true, note: "Matches the PPACA grid, " + bm.short + "." + (best.note ? " " + say(best.note) : "") });
-  if (best.status === "mismatch") return Object.assign({}, best, { status: "mismatch", unsure: false, plainNote: false, note: "The PPACA grid gives a different frequency for " + bm.short + "." });
-  return Object.assign({}, best, { plainNote: false, note: "PPACA grid, " + bm.short + ": " + say(best.note) });
+  // A line for another kind of service (the counseling line, for a screening counter) is left out.
+  const others = PPACA_KINDS.filter(([re]) => !re.test(f.counter)).map(x => x[1]);
+  const rest = lines.filter(l => !others.some(re => re.test(l.row.n)));
+  return { lines: rest.length ? rest : lines, picked: false };
 }
 // Words that tell plans apart ("Non-Union Traditional"), without amounts and words every plan shares.
 const planWords = t => uniq(norm(t).replace(/\bnon[- ]+union\b/g, "nonunion").replace(/\$?\d[\d,.]*/g, " ").split(/[^a-z]+/)
@@ -2752,7 +2804,8 @@ function showGridInfo(){
     esc(Object.values(g.packages).map(v => v.code).join(", ")) + "</span>" + (pk ? g.packages[pk] ? "<span>Using " + esc(capCode(pk)) + ": " + esc(g.packages[pk].label) + "</span>" :
     "</div><div class='err'>This grid has no column for benefit package " + esc(capCode(pk)) + ", so it isn't used.</div><div>" : "") + "</div>");
   if (state.ppacaGrid) parts.push("<b>Loaded</b> " + esc(state.ppacaGrid.name) + "<div class='facts'><span>PPACA grid</span><span>" + state.ppacaGrid.measures.length + " measures</span></div>");
-  box.innerHTML = parts.join("<div style='height:10px'></div>") + (state.gridErr || "");
+  box.innerHTML = parts.join("<div style='height:10px'></div>") + (state.gridErr || "") + (parts.length ? "<button type='button' class='linkbtn' id='gridClear'>Remove grids</button>" : "");
+  const rm = $("#gridClear"); if (rm) rm.onclick = removeGrids;
   $("#cardGrid").classList.toggle("done", !!(g || state.ppacaGrid));
 }
 async function loadGrids(files){
@@ -2775,6 +2828,14 @@ async function loadGrids(files){
   showGridInfo();
   // A newly loaded grid replaces the old one's amounts, even for the same package.
   if (state.ws) state.ws.gridPk = "\u0000";
+  refreshGridSections();
+  // A grid changes the results, so Match and Mismatch calls made before it are cleared.
+  state.calls = {};
+  if (state.ws && state.kw) { regroup(); evaluateAll(); }
+}
+function removeGrids(){
+  state.costGrid = null; state.ppacaGrid = null; state.gridErr = ""; state.calls = {};
+  showGridInfo();
   refreshGridSections();
   if (state.ws && state.kw) { regroup(); evaluateAll(); }
 }
@@ -2826,7 +2887,7 @@ function tableData(){
   const head = ["Status", "Your call", "Check", "Counter or detail", "Keyword value", "Keyword period and action", "Benefit Summary section", "Benefit Summary text", "Benefit Summary says", "Note", "Keyword count", "Keywords", "Example rule"];
   const body = state.groups.map(g => {
     const kv = keywordValue(g);
-    return [LABEL[g.status], CALL_LABEL[callOf(g)] || "", checkTitle(g), checkSub(g), kv.v, kv.s, g.sec ? g.sec.title : "", g.row ? g.row.text : "", g.found, noteFor(g), g.keys.length, g.keys.join("; "), g.raws[0] || ""];
+    return [LABEL[g.status], (isReview(g) && CALL_LABEL[callOf(g)]) || "", checkTitle(g), checkSub(g), kv.v, kv.s, g.sec ? g.sec.title : "", g.row ? g.row.text : "", g.found, noteFor(g), g.keys.length, g.keys.join("; "), g.raws[0] || ""];
   });
   return [head, ...body];
 }
@@ -2949,27 +3010,30 @@ if (typeof DecompressionStream === "undefined") $("#note").textContent = "This b
 
 /* ---------- version and updates ---------- */
 // Every release: raise APP_VERSION by .1, set APP_DATE, and add a CHANGELOG entry at the top.
+// Keep the notes short and plain: a few one-line items a reviewer would notice, no internals.
 // The page can't contact anything, so checking for an update reloads it fresh from GitHub
 // and then shows What's new, marking what changed since the version that was open.
-const APP_VERSION = "1.2", APP_DATE = "Nov 9, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
+const APP_VERSION = "1.3", APP_DATE = "Nov 9, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
 const CHANGELOG = [
+  { v: "1.3", date: "Nov 9, 2026", items: [
+    "PPACA checks are stricter. A frequency that differs from the PPACA grid is now a Mismatch.",
+    "Fixed limits written in words, like Twice per year, being skipped.",
+    "Fixed two limits in one sentence getting mixed up.",
+    "If the tool can't tell which plan the export is for, those results go to Review.",
+    "Added a Remove grids link in box 3."] },
   { v: "1.2", date: "Nov 9, 2026", items: [
-    "A copay or coinsurance only compared to lines for other services now goes to Review instead of Mismatch, with a note saying what was found (for example an office visit copay when the Benefit Summary only lists a telehealth copay).",
-    "Specialist copay counters are only compared to specialist copay lines, not primary care.",
-    "When the cost share grid has no row for a service, its rows for other services aren't used for it.",
-    "When the Benefit Summary itself names the plan for the benefit package, that wins over the cost share grid's plan names."] },
+    "Copays and coinsurance are no longer called a Mismatch against a different service's line.",
+    "Specialist copays are checked against specialist lines.",
+    "Better plan choice when a cost share grid is loaded."] },
   { v: "1.1", date: "Nov 9, 2026", items: [
-    "What's new box: opens after every update check and from the What's new button."] },
+    "Added this What's new box."] },
   { v: "1.0", date: "Nov 9, 2026", items: [
-    "The tool is now hosted on GitHub, so everyone opens the same link and always has the newest version.",
-    "Version number and a Check for updates button in the top right.",
-    "Box 3 for grids: load the cost share grid, the PPACA grid, or both.",
-    "The tool finds the export's benefit package in the cost share grid and only uses that plan's tables.",
-    "The cost share grid is only used for what the Benefit Summary doesn't list. When they disagree, the check goes to Review.",
-    "PPACA checks are compared to the PPACA grid's frequency for the keyword's measure.",
-    "Words like single, double and dozen count as numbers.",
-    "Clicking Match or Mismatch on a Review updates the percentage and the counts.",
-    "Coinsurance found in one service's section says where it was found.",
+    "The tool is now on GitHub with a version number and Check for updates.",
+    "Box 3 for the cost share grid and the PPACA grid.",
+    "The tool finds the export's plan in the cost share grid.",
+    "PPACA checks are compared to the PPACA grid.",
+    "Clicking Match or Mismatch updates the percentage.",
+    "Words like single count as numbers.",
     "Moving background and a new icon."] }
 ];
 // "1.10" is newer than "1.9".
