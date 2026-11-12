@@ -19,7 +19,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-V4XcCMpfs0ccDU7fsnh9QzsxeH7mKuZkPrWX5Xq57N4='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-PDNffGBVP5+SxESG2f2Pw87YKBwhTo2DOEUkgkVMyGM='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="color-scheme" content="dark">
 <meta name="referrer" content="no-referrer">
 <meta name="google" content="notranslate">
@@ -607,10 +607,11 @@ function netOf(n){
   const inn = /\bin[- ]?network\b|\binn\b|\bpoint[- ]of[- ]service\b|(^|[^-])\bparticipating\b|\bnetwork provider|\bpreferred provider|\bcontracted\b|\bppo\b|\bpar provider/.test(n.replace(/\bout[- ]of[- ]network\b|\bout[- ]network\b|\bnon[- ]?(network|participating|par|ppo|preferred|contracted)\b|out[- ]of[- ]network provider/g, " "));
   return out && inn ? "both" : out ? "out" : inn ? "in" : null;
 }
-let PLAN_KEYS = [], PLAN_RES = [];
+let PLAN_KEYS = [], PLAN_RES = [], PLAN_ALIAS = {};
 // A plan is also named by its other common forms: "Copay Plan" as "copay option", "HDHP" as "high deductible".
-function setPlanKeys(keys){
-  PLAN_KEYS = keys.slice();
+// alias: a second name for a plan ("ppo plan" for the tables headed "COPAY PLAN"), read as that plan.
+function setPlanKeys(keys, alias){
+  PLAN_KEYS = keys.slice(); PLAN_ALIAS = alias || {};
   PLAN_RES = PLAN_KEYS.map(p => {
     const forms = [p];
     if (/ plan$/.test(p)) forms.push(p.replace(/ plan$/, " option"));
@@ -619,12 +620,12 @@ function setPlanKeys(keys){
     const extra = / plan$/.test(p) ? [reEsc(p.replace(/ plan$/, "")) + "(?:\\s+(?:employees?|benefits?|medical|health|group|staff))+\\s+plan"] : [];
     // "non-union traditional ppo" is not the "union traditional ppo" plan.
     const notNon = /^non\b/.test(p) ? "" : "(?<!\\bnon[- ])";
-    return [p, new RegExp("(^|[^a-z0-9])" + notNon + "(" + forms.map(reEsc).concat(extra).join("|") + ")($|[^a-z0-9])")];
+    return [PLAN_ALIAS[p] || p, new RegExp("(^|[^a-z0-9])" + notNon + "(" + forms.map(reEsc).concat(extra).join("|") + ")($|[^a-z0-9])")];
   });
 }
 function planOf(n){
   if (!n || !PLAN_RES.length) return null;
-  const hit = PLAN_RES.filter(([, re]) => re.test(n)).map(([p]) => p);
+  const hit = uniq(PLAN_RES.filter(([, re]) => re.test(n)).map(([p]) => p));
   return hit.length === 1 ? hit[0] : null;
 }
 const CLAUSE_SPLIT = /;\s+|\.\s+|\s+\|\s+/;
@@ -949,6 +950,23 @@ function prepWorksheet(raw, name){
     for (let d = 1; !plan && d <= 6; d++) { const u = stream[pkgFirst ? i + d : i - d]; if (!u) break; if (u.codes.length && !u.here) break; plan = u.here; }
     if (plan && !packages[code]) packages[code] = plan;
   }));
+  // The cover can name a plan one way ("PPO Plan / Benefit Package: ca") while its tables sit under another heading
+  // ("COPAY PLAN"). A cover plan with no amounts of its own, beside exactly one plan with amounts that no benefit
+  // package is tied to, is the same plan under two names: the package goes with those tables.
+  let shownPlans = plans;
+  {
+    const hasAmounts = p => sections.some(s => s.rows.some(r => (r.mentions || []).some(m => m.plan === p)));
+    const tied = uniq(Object.values(packages));
+    const empty = tied.filter(p => !hasAmounts(p)), loose = plans.filter(p => !tied.includes(p) && hasAmounts(p));
+    if (empty.length === 1 && loose.length === 1) {
+      const from = empty[0], to = loose[0];
+      Object.keys(packages).forEach(c => { if (packages[c] === from) packages[c] = to; });
+      labels[to] = (labels[from] || from.toUpperCase()) + " (" + (labels[to] || to.toUpperCase()) + " in the tables)";
+      sections.forEach(s => { if (s.plan === from) s.plan = to; s.rows.forEach(r => { if (r.plan === from) r.plan = to; delete r._pp; }); });
+      shownPlans = plans.filter(p => p !== from);
+      setPlanKeys(plans, { [from]: to });
+    }
+  }
   // Riders named on the cover ("Individual Rider \u2013 YTHSAIND / Family Rider \u2013 YTHSAFAM").
   const riderList = [];
   sections.forEach(s => s.rows.forEach(r => { for (const m of r.text.matchAll(/\b(individual|single|family)\s+rider\s*[\u2013\u2014:-]?\s*([A-Za-z0-9]{4,12})\b/gi))
@@ -965,9 +983,11 @@ function prepWorksheet(raw, name){
   const PLAN_CODE = /(?:^|[^A-Za-z0-9])([A-Za-z]{2}PLAN\d{1,3})(?=$|[^A-Za-z0-9])/g;
   const riderCodes = uniq([...riderList.map(x => x.code.toUpperCase()),
     ...[...cover.matchAll(/\brider\s*[\u2013\u2014:-]?\s*([A-Za-z0-9]{4,12})\b/gi)].map(m => m[1].toUpperCase()),
+    // "Rider\u2013PPO = caTRBLU1", "Rider = ceTRBLU1"
+    ...[...cover.matchAll(/\brider\s*(?:[\u2013\u2014-]\s*[A-Za-z]{2,6}\s*)?=\s*([A-Za-z0-9]{4,12})\b/gi)].map(m => m[1].toUpperCase()),
     ...[...cover.matchAll(PLAN_CODE)].map(m => m[1].toUpperCase()),
     ...[...String(name || "").matchAll(PLAN_CODE)].map(m => m[1].toUpperCase())]);
-  return { name, sections, plans, plansFromHeadings: prefixOf.size > 0, planLabels: labels, packages, pkgCodes: allCodes, codeText, codesInName, effDate, riders, riderList, riderCodes, dedEmbedded: embedded("deductible"), oopEmbedded: embedded("out[- ]of[- ]pocket") };
+  return { name, sections, plans: shownPlans, plansFromHeadings: prefixOf.size > 0, planLabels: labels, packages, pkgCodes: allCodes, codeText, codesInName, effDate, riders, riderList, riderCodes, dedEmbedded: embedded("deductible"), oopEmbedded: embedded("out[- ]of[- ]pocket") };
 }
 function activeSections(){
   if (!state.ws) return [];
@@ -1276,7 +1296,7 @@ const AUTO = [
   [/^SAE\d|SUPPACC|SUPACC/, [/SUPPLEMENTAL ACCIDENT/i, /ACCIDENT/i]],
   [/OBESTY|OBESSCR|DIASCR|BRCHEM|BRSTCHEMO|NUTRITNVS|HIV/, [/PREVENTIVE/i]],
   [/MAMMO|COLON|PSA|PAPSC|HPV|HEPAT|HEPTB|LIPID|OSTEO|DEPRESS|ALCOHOL|SYPH|GONORR|CHLMYD|STICOUN|BRCA|ABDOANY|LUNGC|RTNPHYS|WELLWO|GYNVIS|HBPSC|INPAVIOL|PRFALL|FECOCC|SIGMO|CTCOL|BRSTCANC|RHDSCR|TOBAC|IMMUN|BRSTFEED|BRPUMP|FECAL|RTADULT|ADULTRT|^HCR/, [/PREVENTIVE/i]],
-  [/HABIL/, [/^THERAPY SERVICES/i, /\bTHERAPY SERVICES\b/i, /HABILITAT/i, /\b(PHYSICAL|OCCUPATIONAL|SPEECH) THERAP/i]],
+  [/HABIL|^HAB(OT|PT|ST)/, [/^THERAPY SERVICES/i, /\bTHERAPY SERVICES\b/i, /HABILITAT/i, /\b(PHYSICAL|OCCUPATIONAL|SPEECH) THERAP/i]],
   [/CHIR/, [/CHIROPRACT/i]],
   [/^PT(VST|VIS)/, [/\bPHYSICAL THERAP/i, /THERAPY SERVICES/i, /REHABILITATION/i]],
   [/^OT(VST|VIS)/, [/\bOCCUPATIONAL THERAP/i, /THERAPY SERVICES/i, /REHABILITATION/i]],
@@ -2463,7 +2483,7 @@ function foundLine(g){
   if (!g.found || !needsFix(g)) return "";
   const v = esc(keywordValue(g).v || "this");
   return "<div class='note'>" + (g.status === "mismatch" ? "The keyword has <b>" + v + "</b>, but the Benefit Summary says <b>" + esc(g.found) + "</b>."
-    : "The keyword has <b>" + v + "</b>. The closest Benefit Summary line has <b>" + esc(g.found) + "</b>.") + "</div>";
+    : "The keyword has <b>" + v + "</b>. The closest " + (g.sec && g.sec.ppaca ? "PPACA grid" : g.sec && g.sec.grid ? "cost share grid" : "Benefit Summary") + " line has <b>" + esc(g.found) + "</b>.") + "</div>";
 }
 function rowHtml(g, i){
   const kv = keywordValue(g);
@@ -2700,8 +2720,8 @@ function buildWorksheet(){
 // Sections from a grid are prepared on their own, so the Benefit Summary's plan names stay as they are.
 function prepOwn(raw){
   if (!raw.length) return [];
-  const keep = PLAN_KEYS.slice();
-  try { return prepWorksheet(raw, "").sections.filter(s => s.rows.length && !s.intro); } finally { setPlanKeys(keep); }
+  const keep = PLAN_KEYS.slice(), keepAlias = PLAN_ALIAS;
+  try { return prepWorksheet(raw, "").sections.filter(s => s.rows.length && !s.intro); } finally { setPlanKeys(keep, keepAlias); }
 }
 // Rebuild when the grid or the export's package changed.
 function refreshGridSections(){
@@ -3013,8 +3033,12 @@ if (typeof DecompressionStream === "undefined") $("#note").textContent = "This b
 // Keep the notes short and plain: a few one-line items a reviewer would notice, no internals.
 // The page can't contact anything, so checking for an update reloads it fresh from GitHub
 // and then shows What's new, marking what changed since the version that was open.
-const APP_VERSION = "1.3", APP_DATE = "Nov 9, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
+const APP_VERSION = "1.4", APP_DATE = "Nov 12, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
 const CHANGELOG = [
+  { v: "1.4", date: "Nov 12, 2026", items: [
+    "A plan named one way on the cover and another way in the tables (PPO Plan and Copay Plan) is now treated as one plan.",
+    "Habilitative therapy counters like HABOTPTVS are checked against the therapy section.",
+    "Riders written as Rider = code are read from the cover."] },
   { v: "1.3", date: "Nov 9, 2026", items: [
     "PPACA checks are stricter. A frequency that differs from the PPACA grid is now a Mismatch.",
     "Fixed limits written in words, like Twice per year, being skipped.",
