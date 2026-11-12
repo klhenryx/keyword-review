@@ -19,7 +19,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-qA2WleYPpS1ZGwMj8+uw6Y6ns3CFxwYCbIfUPCHnLi8='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-gnbesLEmmHKO9QjNfn9BTCh9g27VmDo7U2ZYyNjlNrE='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="color-scheme" content="dark">
 <meta name="referrer" content="no-referrer">
 <meta name="google" content="notranslate">
@@ -2630,7 +2630,13 @@ function parsePpacaGrid(sheets, name){
 }
 // Frequency wording read the way the limit check reads a Benefit Summary: "Annually" is once per year,
 // and "every two years" with no count before it is once every two years.
-const ppacaFreq = t => t.replace(/(:)?\s+(\d{1,2})\)\s+/g, (w, colon, d) => (colon ? ": " : "; ") + d + ") ").replace(/\b(?:allowed\s+)?(?:once\s+)?(?:annually|on an annual basis)\b/gi, "once per year").replace(/^annual\.?$/i, "once per year")
+// Two points in a pregnancy written as events, not a count ("Allowed at first prenatal visit and at least 24 weeks
+// gestation; then allowed annually thereafter"), are two times during the pregnancy.
+const PREG_PT = "(?:the\\s+)?[a-z0-9' -]*?(?:prenatal|gestation|pregnan|trimester)[a-z0-9' -]*";
+const PREG_TWO = new RegExp("\\b(?:allowed\\s+)?at\\s+(" + PREG_PT + "?)\\s+and\\s+(?:again\\s+)?(?:at\\s+(?!least))?(" + PREG_PT + ")", "i");
+const ppacaOccasions = t => t.split(";").map(c => /\b(once|twice|one|two|three|\d+\s+(?:times?|visits?|screenings?|tests?)|per|every|each)\b/i.test(c) ? c
+  : c.replace(PREG_TWO, (w, a, b) => "twice during pregnancy (" + a.trim() + " and " + b.trim() + ")")).join(";");
+const ppacaFreq = t => ppacaOccasions(t).replace(/(:)?\s+(\d{1,2})\)\s+/g, (w, colon, d) => (colon ? ": " : "; ") + d + ") ").replace(/\b(?:allowed\s+)?(?:once\s+)?(?:annually|on an annual basis)\b/gi, "once per year").replace(/^annual\.?$/i, "once per year")
   .replace(/\bevery\b/gi, (w, at, all) => /\b(once|twice|one|two|three|four|five|six|\d+|times?)\s+(?:[a-z]+\s+){0,2}$/i.test(all.slice(Math.max(0, at - 30), at)) ? w : "once every");
 // "There are 5 covered screening services: 1) FIT annually; 2) ... 5) colonoscopy every 10 years" is one frequency per
 // numbered item, so each item is its own line. The lead-in before "1)" isn't a frequency.
@@ -2642,7 +2648,7 @@ function ppacaSection(m){
   const rows = texts.map(t => ({ cells: [{ t: ppacaFreq(t.replace(/^\d{1,2}\)\s+/, "")), c: 0, span: 1 }], table: 0, para: true }));
   const sec = rows.length ? prepOwn([{ title: "PREVENTIVE MEASURE " + m.n, rows }])[0] || null : null;
   if (sec) sec.title = "PPACA grid: " + m.short;
-  if (sec && sec.rows.length === texts.length) sec.rows.forEach((r, i) => { r.text = texts[i]; });
+  if (sec && sec.rows.length === texts.length) sec.rows.forEach((r, i) => { r.text = texts[i]; r.occ = ppacaOccasions(texts[i]) !== texts[i]; });
   if (sec) Object.assign(sec, { id: "ppaca:" + m.n, ppaca: true, lines: sec.rows.filter(r => r.usable && !r.header).map((r, i) => Object.assign({}, sec, { id: "ppaca:" + m.n + ":" + i, rows: [r] })) });
   return (m.sec = sec || null);
 }
@@ -2685,7 +2691,8 @@ function checkPpaca(f, g, r0){
     if (r.status in rank && (!best || rank[r.status] < rank[best.status])) { best = r; bl = l; }
   }
   if (best && best.status === "match") return Object.assign({}, best, { sec: bl.sec, plainNote: true, note: "Matches the PPACA grid, " + bl.m.short + "." +
-    was + (others ? " The measure lists other frequencies for other codes, and this is the line that matches." : "") + (best.note ? " " + say(best.note) : "") });
+    was + (others ? " The measure lists other frequencies for other codes, and this is the line that matches." : "") + (best.note ? " " + say(best.note) : "") +
+    (bl.row.occ && f.amount === 2 ? " The grid names two points in a pregnancy, which is counted as 2." : "") });
   // 2) Every line for this service gives a clear frequency and none is the keyword's: a mismatch.
   //    Clear means each count has its time period beside it. The same count for a year that only differs by
   //    calendar or rolling isn't clear, so that stays a Review.
@@ -3127,8 +3134,10 @@ if (typeof DecompressionStream === "undefined") $("#note").textContent = "This b
 // Keep the notes short and plain: a few one-line items a reviewer would notice, no internals.
 // The page can't contact anything, so checking for an update reloads it fresh from GitHub
 // and then shows What's new, marking what changed since the version that was open.
-const APP_VERSION = "1.7", APP_DATE = "Nov 12, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
+const APP_VERSION = "1.8", APP_DATE = "Nov 12, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
 const CHANGELOG = [
+  { v: "1.8", date: "Nov 12, 2026", items: [
+    "Two named points in a pregnancy on the PPACA grid now count as 2 (gestational diabetes screening, DIASCRPR)."] },
   { v: "1.7", date: "Nov 12, 2026", items: [
     "An obesity dollar limit (OBESTYYR1) is now checked against the Weight Loss Surgery section, not treated as preventive.",
     "A preventive keyword (routine physical, diabetes screening) is now also looked up in the rest of the Benefit Summary."] },
