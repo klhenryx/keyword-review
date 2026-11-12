@@ -19,7 +19,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-7u/QS2EktaoDBqPwZl1b92hS6upnmkRooWgsK2j4/mg='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-9XgbifICkrLvLTcSxF1iotMYyDePHwE5MB90jQL4lQk='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="color-scheme" content="dark">
 <meta name="referrer" content="no-referrer">
 <meta name="google" content="notranslate">
@@ -2578,19 +2578,29 @@ function parsePpacaGrid(sheets, name){
       const short = ("Measure " + x[1] + " - " + x[2]).replace(/\s+(USPSTF|HRSA|ACIP|For ACT|Arkansas|Effective|Refer to)\b.*$/i, "")
         .replace(/\s*\((for|effective|eff|rel|see|refer|consult)\b.*$/i, "").replace(/[\s,;:-]+$/, "");
       const cut = short.length > 90 ? short.slice(0, 90).replace(/\s+\S*$/, "").replace(/[\s,;:-]+(and|or|in|of|for|the)?$/i, "") : short;
-      m = { n: String(Number(x[1])), short: cut, freqs: [] }; measures.push(m); fcol = -1; continue;
+      m = { n: String(Number(x[1])), short: cut, text: x[2], freqs: [] }; measures.push(m); fcol = -1; continue;
     }
     if (!m) continue;
     const fi = row.findIndex(c => /^frequency$/i.test(c));
     if (fi >= 0) { fcol = fi; continue; }
     if (fcol >= 0) add(m.freqs, row[fcol]);
   }
-  const archived = {};
+  // Archived measures can point to the policy they were folded into ("DEACTIVATED POLICY (see policy 2011021)").
+  const archived = {}, movedTo = {};
   for (const sh of sheets.filter(sh => /archiv/i.test(sh.name))) for (const r of sh.rows) {
     const a = gridCell((r || [])[0]), b = gridCell((r || [])[1]);
-    if (/^\d{1,3}$/.test(a) && b && !/^cpt/i.test(b)) archived[String(Number(a))] = b.replace(/^\d{5,}\s*-\s*/, "").slice(0, 90);
+    if (!/^\d{1,3}$/.test(a) || !b || /^cpt/i.test(b)) continue;
+    archived[String(Number(a))] = b.replace(/^\d{5,}\s*-\s*/, "").slice(0, 90);
+    const pol = /\bsee\s+(?:coverage\s+)?policy\s+(\d{5,})/i.exec(b);
+    if (pol) movedTo[String(Number(a))] = pol[1];
   }
-  return { kind: "ppaca", name, measures, archived };
+  // The change log names each policy ("2011021 - Cervical Cancer and Human Papillomavirus (HPV), Screening - removed ICD9 codes").
+  const policies = {};
+  for (const sh of sheets.filter(sh => /change/i.test(sh.name))) for (const r of sh.rows) for (const c of r || []) {
+    const x = /^(\d{6,8})\s*-\s*(.{8,80}?)\s+-\s/.exec(gridCell(c));
+    if (x) (policies[x[1]] = policies[x[1]] || []).push(norm(x[2]));
+  }
+  return { kind: "ppaca", name, measures, archived, movedTo, policies };
 }
 // Frequency wording read the way the limit check reads a Benefit Summary: "Annually" is once per year,
 // and "every two years" with no count before it is once every two years.
@@ -2623,6 +2633,9 @@ function checkPpaca(f, g, r0){
   const pg = state.ppacaGrid, nums = ppacaMeasures(g);
   if (!nums.length) return Object.assign({}, r0, { note: "The keyword names don't give a PPACA measure number, so the PPACA grid couldn't be used. Nothing to compare." });
   const found = nums.map(n => pg.measures.find(m => m.n === n)).filter(Boolean);
+  // An archived measure that was folded into a current one is compared to that one.
+  let moved = null;
+  if (!found.length) { moved = ppacaMoved(f, nums); if (moved) found.push(moved.m); }
   if (!found.length) {
     const arch = nums.map(n => pg.archived[n] ? "Measure " + n + " (" + pg.archived[n] + ")" : "").filter(Boolean);
     return Object.assign({}, r0, { status: "partial", plainNote: false, note: arch.length
@@ -2632,7 +2645,11 @@ function checkPpaca(f, g, r0){
   const say = t => String(t || "").replace(/\bthe Benefit Summary\b/g, "the PPACA grid").replace(/\bThe Benefit Summary\b/g, "The PPACA grid");
   const all = found.flatMap(m => { const sec = ppacaSection(m); return sec ? sec.lines.map(one => ({ m, sec, one, row: one.rows[0] })) : []; });
   if (!all.length) return Object.assign({}, r0, { note: "The PPACA grid's " + found.map(m => m.short).join(" and ") + " doesn't give a frequency to compare." });
-  const { lines, picked } = ppacaLines(f, all);
+  let { lines, picked } = ppacaLines(f, all);
+  // The frequency for a folded-in service can be in the measure's description instead of its Frequency column
+  // ("...screening with Pap smear and Human Papilloma Virus (HPV) screening every 5 years").
+  const was = moved ? " Measure " + moved.from + " is archived and now falls under this one." : "";
+  if (moved && !picked) { const d = ppacaDescLines(f, moved.m); if (d.length) { lines = d; picked = true; } }
   // 1) A line that agrees.
   const rank = { match: 0, partial: 1 };
   let best = null, bl = null, others = 0;
@@ -2642,7 +2659,7 @@ function checkPpaca(f, g, r0){
     if (r.status in rank && (!best || rank[r.status] < rank[best.status])) { best = r; bl = l; }
   }
   if (best && best.status === "match") return Object.assign({}, best, { sec: bl.sec, plainNote: true, note: "Matches the PPACA grid, " + bl.m.short + "." +
-    (others ? " The measure lists other frequencies for other codes, and this is the line that matches." : "") + (best.note ? " " + say(best.note) : "") });
+    was + (others ? " The measure lists other frequencies for other codes, and this is the line that matches." : "") + (best.note ? " " + say(best.note) : "") });
   // 2) Every line for this service gives a clear frequency and none is the keyword's: a mismatch.
   //    Clear means each count has its time period beside it. The same count for a year that only differs by
   //    calendar or rolling isn't clear, so that stays a Review.
@@ -2653,11 +2670,41 @@ function checkPpaca(f, g, r0){
   const entries = lines.map(l => STEPS.test(unparen(l.row.n).replace(/\([^)]*\)/g, " ")) || !eachHasPeriod(l.row.n) ? [] : l.row.n.split(SENT_SPLIT).flatMap(sn => numPeriods(sn, f, l.row)));
   if (f.period && entries.every(e => e.length && e.every(x => x.st !== "unstated") && !e.some(x => eq(x.n, f.amount) && x.st === "same")))
     return { status: "mismatch", sec: lines[0].sec, row: lines[0].row, link: { sec: lines[0].sec, how: "ppaca" }, found: uniq(lines.map(l => l.row.text)).join(" / "), hl: { bad: "plain" }, plainNote: false,
-      note: "The PPACA grid gives a different frequency for " + lines[0].m.short + "." };
+      note: "The PPACA grid gives a different frequency for " + lines[0].m.short + "." + was };
   // 3) Not clear enough to call: a person compares them.
-  if (best) return Object.assign({}, best, { sec: bl.sec, plainNote: false, note: "PPACA grid, " + bl.m.short + ": " + say(best.note) });
+  if (best) return Object.assign({}, best, { sec: bl.sec, plainNote: false, note: "PPACA grid, " + bl.m.short + ": " + say(best.note) + was });
   return { status: "partial", sec: lines[0].sec, row: lines[0].row, link: { sec: lines[0].sec, how: "ppaca" }, plainNote: false,
-    note: "PPACA grid, " + lines[0].m.short + ": the frequency wording isn't clear enough for the tool to decide. Compare them side by side." };
+    note: "PPACA grid, " + lines[0].m.short + ": the frequency wording isn't clear enough for the tool to decide. Compare them side by side." + was };
+}
+// The current measure an archived one was folded into: the policy its archive note points to, by the name the
+// change log gives that policy, or the one current measure whose title names the counter's service.
+function ppacaMoved(f, nums){
+  const pg = state.ppacaGrid, hint = (SERVICE_HINTS.find(([re]) => re.test(f.counter)) || [])[1];
+  for (const n of nums) {
+    if (!pg.archived[n]) continue;
+    const names = (pg.policies || {})[(pg.movedTo || {})[n]] || [];
+    const byPolicy = pg.measures.filter(m => names.some(nm => norm(m.short).includes(nm)));
+    const byName = hint ? pg.measures.filter(m => hint.test(norm(m.short))) : [];
+    const both = byPolicy.filter(m => byName.includes(m));
+    const pick = both.length === 1 ? both : byPolicy.length === 1 ? byPolicy : byName.length === 1 ? byName : [];
+    if (pick.length) return { m: pick[0], from: n };
+  }
+  return null;
+}
+// Sentences of a measure's description that name the counter's service and give a frequency.
+function ppacaDescLines(f, m){
+  const hint = (SERVICE_HINTS.find(([re]) => re.test(f.counter)) || [])[1];
+  if (!hint || !m.text) return [];
+  const key = String(hint);
+  m.desc = m.desc || {};
+  if (!m.desc[key]) {
+    const texts = m.text.split(/(?<=[.;])\s+/).filter(t => hint.test(norm(t)) && statedPeriods(norm(ppacaFreq(t))).length && countNums(norm(ppacaFreq(t))).length);
+    const rows = texts.map(t => ({ cells: [{ t: ppacaFreq(t), c: 0, span: 1 }], table: 0, para: true }));
+    const sec = rows.length ? prepOwn([{ title: "PREVENTIVE MEASURE " + m.n, rows }])[0] || null : null;
+    if (sec && sec.rows.length === texts.length) { sec.title = "PPACA grid: " + m.short; sec.rows.forEach((r, i) => { r.text = texts[i]; }); Object.assign(sec, { id: "ppacad:" + m.n + ":" + key, ppaca: true }); }
+    m.desc[key] = sec ? sec.rows.filter(r => r.usable && !r.header).map((r, i) => ({ m, sec, one: Object.assign({}, sec, { id: sec.id + ":" + i, rows: [r] }), row: r })) : [];
+  }
+  return m.desc[key];
 }
 // Which of a measure's frequency lines are for this counter. A line names its service at the start
 // ("Flexible sigmoidoscopy, every 5 years OR every 10 years when combined with annual FIT" is the sigmoidoscopy line).
@@ -3054,8 +3101,10 @@ if (typeof DecompressionStream === "undefined") $("#note").textContent = "This b
 // Keep the notes short and plain: a few one-line items a reviewer would notice, no internals.
 // The page can't contact anything, so checking for an update reloads it fresh from GitHub
 // and then shows What's new, marking what changed since the version that was open.
-const APP_VERSION = "1.5", APP_DATE = "Nov 12, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
+const APP_VERSION = "1.6", APP_DATE = "Nov 12, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
 const CHANGELOG = [
+  { v: "1.6", date: "Nov 12, 2026", items: [
+    "A keyword for an archived PPACA measure is now checked against the measure it was folded into (HPV testing under Measure 9)."] },
   { v: "1.5", date: "Nov 12, 2026", items: [
     "The PPO Plan and Copay Plan fix from 1.4 now works on more summary layouts."] },
   { v: "1.4", date: "Nov 12, 2026", items: [
