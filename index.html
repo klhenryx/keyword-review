@@ -19,7 +19,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-gnbesLEmmHKO9QjNfn9BTCh9g27VmDo7U2ZYyNjlNrE='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-q8WDcOtqmvSGd1ymny20W9nNHmJnniAGV/sfRphNsLg='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="color-scheme" content="dark">
 <meta name="referrer" content="no-referrer">
 <meta name="google" content="notranslate">
@@ -2690,9 +2690,18 @@ function checkPpaca(f, g, r0){
     if (r.status !== "match") others++;
     if (r.status in rank && (!best || rank[r.status] < rank[best.status])) { best = r; bl = l; }
   }
-  if (best && best.status === "match") return Object.assign({}, best, { sec: bl.sec, plainNote: true, note: "Matches the PPACA grid, " + bl.m.short + "." +
-    was + (others ? " The measure lists other frequencies for other codes, and this is the line that matches." : "") + (best.note ? " " + say(best.note) : "") +
-    (bl.row.occ && f.amount === 2 ? " The grid names two points in a pregnancy, which is counted as 2." : "") });
+  if (best && best.status === "match") {
+    // A match needs the tool to know the line is the keyword's, and the keyword to agree with the line's main frequency.
+    // Agreeing with one of several different lines, or only with a later part of a line ("...; then annually thereafter",
+    // "or every 5 years (high risk)"), goes to Review.
+    const link = { sec: bl.sec, how: "ppaca" };
+    if (lines.length > 1 && others) return Object.assign({}, best, { status: "partial", sec: bl.sec, link, plainNote: false, note: "PPACA grid, " + bl.m.short +
+      ": the keyword agrees with this line, but the measure lists other frequencies for other codes and the tool can't tell which line is this keyword's. Check that this is the right line." + was });
+    if (!ppacaMainAgrees(f, g, bl)) return Object.assign({}, best, { status: "partial", sec: bl.sec, link, plainNote: false, note: "PPACA grid, " + bl.m.short +
+      ": the keyword agrees with a later part of this line, not its main frequency. Check that this is the part the keyword is for." + was });
+    return Object.assign({}, best, { sec: bl.sec, plainNote: true, note: "Matches the PPACA grid, " + bl.m.short + "." + was + (best.note ? " " + say(best.note) : "") +
+      (bl.row.occ && f.amount === 2 ? " The grid names two points in a pregnancy, which is counted as 2." : "") });
+  }
   // 2) Every line for this service gives a clear frequency and none is the keyword's: a mismatch.
   //    Clear means each count has its time period beside it. The same count for a year that only differs by
   //    calendar or rolling isn't clear, so that stays a Review.
@@ -2708,6 +2717,21 @@ function checkPpaca(f, g, r0){
   if (best) return Object.assign({}, best, { sec: bl.sec, plainNote: false, note: "PPACA grid, " + bl.m.short + ": " + say(best.note) + was });
   return { status: "partial", sec: lines[0].sec, row: lines[0].row, link: { sec: lines[0].sec, how: "ppaca" }, plainNote: false,
     note: "PPACA grid, " + lines[0].m.short + ": the frequency wording isn't clear enough for the tool to decide. Compare them side by side." + was };
+}
+// Does the keyword agree with a line's main frequency: the text up to the first "or", "then", "but", bracket or
+// semicolon that follows a count with its time period?
+const PPACA_SEP = /;|\(|\)|\bor\b|\bthen\b|\bbut\b|\bunless\b|\bwhen\b|,\s*(?=(?:once|twice|one|two|three|\d+)\b)/g;
+function ppacaMainAgrees(f, g, l){
+  const n = l.row.n;
+  for (const m of n.matchAll(PPACA_SEP)) {
+    const head = n.slice(0, m.index);
+    if (!statedPeriods(head).length || !countNums(head).length) continue;
+    if (!n.slice(m.index).replace(PPACA_SEP, " ").trim()) return true;
+    const sec = prepOwn([{ title: "PREVENTIVE MEASURE " + l.m.n, rows: [{ cells: [{ t: head, c: 0, span: 1 }], table: 0, para: true }] }])[0];
+    const row = sec && sec.rows.find(r => r.usable && !r.header);
+    return !row || checkLimit(f, g, Object.assign({}, l.one, { id: l.one.id + ":head", rows: [row] })).status === "match";
+  }
+  return true;
 }
 // The current measure an archived one was folded into: the policy its archive note points to, by the name the
 // change log gives that policy, or the one current measure whose title names the counter's service.
@@ -3134,8 +3158,10 @@ if (typeof DecompressionStream === "undefined") $("#note").textContent = "This b
 // Keep the notes short and plain: a few one-line items a reviewer would notice, no internals.
 // The page can't contact anything, so checking for an update reloads it fresh from GitHub
 // and then shows What's new, marking what changed since the version that was open.
-const APP_VERSION = "1.8", APP_DATE = "Nov 12, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
+const APP_VERSION = "1.9", APP_DATE = "Nov 12, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
 const CHANGELOG = [
+  { v: "1.9", date: "Nov 12, 2026", items: [
+    "PPACA matches are stricter. When a measure lists more than one frequency and the tool can't tell which is the keyword's, the row goes to Review."] },
   { v: "1.8", date: "Nov 12, 2026", items: [
     "Two named points in a pregnancy on the PPACA grid now count as 2 (gestational diabetes screening, DIASCRPR)."] },
   { v: "1.7", date: "Nov 12, 2026", items: [
