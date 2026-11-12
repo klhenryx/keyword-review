@@ -19,7 +19,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-PDNffGBVP5+SxESG2f2Pw87YKBwhTo2DOEUkgkVMyGM='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-7u/QS2EktaoDBqPwZl1b92hS6upnmkRooWgsK2j4/mg='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="color-scheme" content="dark">
 <meta name="referrer" content="no-referrer">
 <meta name="google" content="notranslate">
@@ -623,6 +623,18 @@ function setPlanKeys(keys, alias){
     return [PLAN_ALIAS[p] || p, new RegExp("(^|[^a-z0-9])" + notNon + "(" + forms.map(reEsc).concat(extra).join("|") + ")($|[^a-z0-9])")];
   });
 }
+// Two names for one plan: everything under the cover's name moves to the name the tables use.
+function aliasPlan(x, from, to){
+  Object.keys(x.packages).forEach(c => { if (x.packages[c] === from) x.packages[c] = to; });
+  x.labels[to] = (x.labels[from] || from.toUpperCase()) + " (" + (x.labels[to] || to.toUpperCase()) + " in the tables)";
+  x.sections.forEach(s => {
+    if (s.plan === from) s.plan = to;
+    if (s.plans) s.plans = uniq(s.plans.map(p => p === from ? to : p));
+    s.rows.forEach(r => { if (r.plan === from) r.plan = to; (r.mentions || []).forEach(m => { if (m.plan === from) m.plan = to; }); delete r._pp; });
+  });
+  setPlanKeys(PLAN_KEYS, Object.assign({}, PLAN_ALIAS, { [from]: to }));
+  return x.plans.filter(p => p !== from);
+}
 function planOf(n){
   if (!n || !PLAN_RES.length) return null;
   const hit = uniq(PLAN_RES.filter(([, re]) => re.test(n)).map(([p]) => p));
@@ -958,14 +970,7 @@ function prepWorksheet(raw, name){
     const hasAmounts = p => sections.some(s => s.rows.some(r => (r.mentions || []).some(m => m.plan === p)));
     const tied = uniq(Object.values(packages));
     const empty = tied.filter(p => !hasAmounts(p)), loose = plans.filter(p => !tied.includes(p) && hasAmounts(p));
-    if (empty.length === 1 && loose.length === 1) {
-      const from = empty[0], to = loose[0];
-      Object.keys(packages).forEach(c => { if (packages[c] === from) packages[c] = to; });
-      labels[to] = (labels[from] || from.toUpperCase()) + " (" + (labels[to] || to.toUpperCase()) + " in the tables)";
-      sections.forEach(s => { if (s.plan === from) s.plan = to; s.rows.forEach(r => { if (r.plan === from) r.plan = to; delete r._pp; }); });
-      shownPlans = plans.filter(p => p !== from);
-      setPlanKeys(plans, { [from]: to });
-    }
+    if (empty.length === 1 && loose.length === 1) shownPlans = aliasPlan({ sections, packages, labels, plans }, empty[0], loose[0]);
   }
   // Riders named on the cover ("Individual Rider \u2013 YTHSAIND / Family Rider \u2013 YTHSAFAM").
   const riderList = [];
@@ -2122,6 +2127,13 @@ function finishGroup(g, r){
 function exportPackage(){ return state.kw ? state.kwMain || "" : ""; }
 // A package code as the export writes it ("ZQ", "Ar"); codes read only from the Benefit Summary get a capital first letter.
 const capCode = x => (state.pkgRaw && state.pkgRaw[x]) || (state.ws && state.ws.codeText && state.ws.codeText[x]) || x.charAt(0).toUpperCase() + x.slice(1);
+// Does this plan have any deductible or out-of-pocket amount of its own in the Benefit Summary?
+function planHasAccums(p){
+  const keep = state.plan;
+  state.scoring = true; state.plan = p;
+  try { return state.groups.some(g => (g.fact.type === "accum" || g.fact.type === "ded") && !["notstated", "unlinked"].includes(checkFact(g.fact, g).status)); }
+  finally { state.plan = keep; state.scoring = false; }
+}
 function pickPlan(){
   const plans = state.ws ? state.ws.plans : [];
   if (!plans.length) return "";
@@ -2166,9 +2178,18 @@ function evaluateAll(){
   else if (pk && pkgs[pk] && state.ws.plans.includes(pkgs[pk])) {
     state.plan = pkgs[pk]; state.planWhy = "package";
     const sc = state.planScores || {};
-    if (fit !== state.plan && !sc[state.plan] && sc[fit] >= 2)
-      state.pkgWarn = "None of the deductible or out-of-pocket amounts in this export match " + (state.ws.planLabels[state.plan] || state.plan) +
+    if (fit !== state.plan && !sc[state.plan] && sc[fit] >= 2) {
+      // The cover's plan has no deductible or out-of-pocket table of its own, and the tables that do fit belong to no
+      // other benefit package: the cover and the tables use two names for one plan ("PPO Plan" and "COPAY PLAN").
+      const cover = state.plan, elsewhere = Object.keys(pkgs).some(c => c !== pk && pkgs[c] === fit);
+      if (!elsewhere && !planHasAccums(cover)) {
+        const ws = state.ws;
+        ws.plans = aliasPlan({ sections: ws.sections, packages: ws.packages, labels: ws.planLabels, plans: ws.plans }, cover, fit);
+        pkgs[pk] = fit; state.plan = fit;
+      }
+      else state.pkgWarn = "None of the deductible or out-of-pocket amounts in this export match " + (state.ws.planLabels[state.plan] || state.plan) +
         ", but they do match " + (state.ws.planLabels[fit] || fit) + ". Check that the benefit package is right in both files.";
+    }
   }
   else if (state.ws.plansFromHeadings && !Math.max(0, ...Object.values(state.planScores || {}))) {
     // Plan tables found only from their headings, and no amounts tie the export to one: compare to everything and say so.
@@ -3033,8 +3054,10 @@ if (typeof DecompressionStream === "undefined") $("#note").textContent = "This b
 // Keep the notes short and plain: a few one-line items a reviewer would notice, no internals.
 // The page can't contact anything, so checking for an update reloads it fresh from GitHub
 // and then shows What's new, marking what changed since the version that was open.
-const APP_VERSION = "1.4", APP_DATE = "Nov 12, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
+const APP_VERSION = "1.5", APP_DATE = "Nov 12, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
 const CHANGELOG = [
+  { v: "1.5", date: "Nov 12, 2026", items: [
+    "The PPO Plan and Copay Plan fix from 1.4 now works on more summary layouts."] },
   { v: "1.4", date: "Nov 12, 2026", items: [
     "A plan named one way on the cover and another way in the tables (PPO Plan and Copay Plan) is now treated as one plan.",
     "Habilitative therapy counters like HABOTPTVS are checked against the therapy section.",
