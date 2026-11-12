@@ -19,7 +19,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-q8WDcOtqmvSGd1ymny20W9nNHmJnniAGV/sfRphNsLg='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-EEXSdvXFvaYLzAC28PzMwy/32ogCTBMwpQHItGyj5Jw='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="color-scheme" content="dark">
 <meta name="referrer" content="no-referrer">
 <meta name="google" content="notranslate">
@@ -2685,7 +2685,10 @@ function checkPpaca(f, g, r0){
   // 1) A line that agrees.
   const rank = { match: 0, partial: 1 };
   let best = null, bl = null, others = 0;
-  for (const l of lines) {
+  // A line that starts with its frequency ("every 3 months") is the measure's general line; one that starts with
+  // a named service or drug ("Lenacapavir is given every 6 months") is only for that one.
+  const named = l => !/^(allow(ed)?|once|twice|one|two|three|four|five|six|\d+|every|annual(ly)?|monthly|per|usp?stf)\b/.test(l.row.n);
+  for (const l of lines.filter(l => !named(l)).concat(lines.filter(named))) {
     const r = checkLimit(f, g, l.one);
     if (r.status !== "match") others++;
     if (r.status in rank && (!best || rank[r.status] < rank[best.status])) { best = r; bl = l; }
@@ -2695,11 +2698,12 @@ function checkPpaca(f, g, r0){
     // Agreeing with one of several different lines, or only with a later part of a line ("...; then annually thereafter",
     // "or every 5 years (high risk)"), goes to Review.
     const link = { sec: bl.sec, how: "ppaca" };
-    if (lines.length > 1 && others) return Object.assign({}, best, { status: "partial", sec: bl.sec, link, plainNote: false, note: "PPACA grid, " + bl.m.short +
-      ": the keyword agrees with this line, but the measure lists other frequencies for other codes and the tool can't tell which line is this keyword's. Check that this is the right line." + was });
+    if (!picked && named(bl) && lines.some(l => !named(l))) return Object.assign({}, best, { status: "partial", sec: bl.sec, link, plainNote: false, note: "PPACA grid, " + bl.m.short +
+      ": the keyword only agrees with this line, which is for one named service, not with the measure's general line. Check that this is the right line." + was });
     if (!ppacaMainAgrees(f, g, bl)) return Object.assign({}, best, { status: "partial", sec: bl.sec, link, plainNote: false, note: "PPACA grid, " + bl.m.short +
       ": the keyword agrees with a later part of this line, not its main frequency. Check that this is the part the keyword is for." + was });
-    return Object.assign({}, best, { sec: bl.sec, plainNote: true, note: "Matches the PPACA grid, " + bl.m.short + "." + was + (best.note ? " " + say(best.note) : "") +
+    return Object.assign({}, best, { sec: bl.sec, plainNote: true, note: "Matches the PPACA grid, " + bl.m.short + "." + was +
+      (others ? " The measure lists other frequencies for other codes, and this is the line that matches." : "") + (best.note ? " " + say(best.note) : "") +
       (bl.row.occ && f.amount === 2 ? " The grid names two points in a pregnancy, which is counted as 2." : "") });
   }
   // 2) Every line for this service gives a clear frequency and none is the keyword's: a mismatch.
@@ -2723,13 +2727,16 @@ function checkPpaca(f, g, r0){
 const PPACA_SEP = /;|\(|\)|\bor\b|\bthen\b|\bbut\b|\bunless\b|\bwhen\b|,\s*(?=(?:once|twice|one|two|three|\d+)\b)/g;
 function ppacaMainAgrees(f, g, l){
   const n = l.row.n;
+  const agrees = t => { const sec = prepOwn([{ title: "PREVENTIVE MEASURE " + l.m.n, rows: [{ cells: [{ t, c: 0, span: 1 }], table: 0, para: true }] }])[0];
+    const row = sec && sec.rows.find(r => r.usable && !r.header);
+    return !row || checkLimit(f, g, Object.assign({}, l.one, { id: l.one.id + ":part", rows: [row] })).status === "match"; };
+  // A stated cap in brackets ("Once during pregnancy (maximum twice per year)") is a limit of its own.
+  const caps = [...n.matchAll(/\(((?:maximum|max|limit(?:ed)? (?:to|of)|up to|no more than)\b[^()]*)\)/g)].map(m => m[1]);
   for (const m of n.matchAll(PPACA_SEP)) {
     const head = n.slice(0, m.index);
     if (!statedPeriods(head).length || !countNums(head).length) continue;
     if (!n.slice(m.index).replace(PPACA_SEP, " ").trim()) return true;
-    const sec = prepOwn([{ title: "PREVENTIVE MEASURE " + l.m.n, rows: [{ cells: [{ t: head, c: 0, span: 1 }], table: 0, para: true }] }])[0];
-    const row = sec && sec.rows.find(r => r.usable && !r.header);
-    return !row || checkLimit(f, g, Object.assign({}, l.one, { id: l.one.id + ":head", rows: [row] })).status === "match";
+    return agrees(head) || caps.some(agrees);
   }
   return true;
 }
@@ -3158,8 +3165,10 @@ if (typeof DecompressionStream === "undefined") $("#note").textContent = "This b
 // Keep the notes short and plain: a few one-line items a reviewer would notice, no internals.
 // The page can't contact anything, so checking for an update reloads it fresh from GitHub
 // and then shows What's new, marking what changed since the version that was open.
-const APP_VERSION = "1.9", APP_DATE = "Nov 12, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
+const APP_VERSION = "2.0", APP_DATE = "Nov 12, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
 const CHANGELOG = [
+  { v: "2.0", date: "Nov 12, 2026", items: [
+    "A keyword that agrees with one of a measure's frequency lines is a Match again (3 per year and \"Three per year\"). The row says which line it matched."] },
   { v: "1.9", date: "Nov 12, 2026", items: [
     "PPACA matches are stricter. When a measure lists more than one frequency and the tool can't tell which is the keyword's, the row goes to Review."] },
   { v: "1.8", date: "Nov 12, 2026", items: [
