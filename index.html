@@ -19,7 +19,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-9XgbifICkrLvLTcSxF1iotMYyDePHwE5MB90jQL4lQk='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-qA2WleYPpS1ZGwMj8+uw6Y6ns3CFxwYCbIfUPCHnLi8='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="color-scheme" content="dark">
 <meta name="referrer" content="no-referrer">
 <meta name="google" content="notranslate">
@@ -1299,7 +1299,10 @@ const AUTO = [
   [/WIG/, [/CHEMOTHERAPY|RADIATION/i]],
   [/MASTEC/, [/CHEMOTHERAPY|RADIATION|PROSTHETIC/i]],
   [/^SAE\d|SUPPACC|SUPACC/, [/SUPPLEMENTAL ACCIDENT/i, /ACCIDENT/i]],
-  [/OBESTY|OBESSCR|DIASCR|BRCHEM|BRSTCHEMO|NUTRITNVS|HIV/, [/PREVENTIVE/i]],
+  [/OBES\w*(SCR|COUN)|DIASCR|BRCHEM|BRSTCHEMO|NUTRITNVS|HIV/, [/PREVENTIVE/i]],
+  // Other obesity counters (a yearly or lifetime limit) belong to the weight loss surgery section when there is one.
+  [/OBES|BARIAT|WTLOSS/, [/OBESITY|BARIATRIC/i, /WEIGHT LOSS/i]],
+  [/OBESTY/, [/PREVENTIVE/i]],
   [/MAMMO|COLON|PSA|PAPSC|HPV|HEPAT|HEPTB|LIPID|OSTEO|DEPRESS|ALCOHOL|SYPH|GONORR|CHLMYD|STICOUN|BRCA|ABDOANY|LUNGC|RTNPHYS|WELLWO|GYNVIS|HBPSC|INPAVIOL|PRFALL|FECOCC|SIGMO|CTCOL|BRSTCANC|RHDSCR|TOBAC|IMMUN|BRSTFEED|BRPUMP|FECAL|RTADULT|ADULTRT|^HCR/, [/PREVENTIVE/i]],
   [/HABIL|^HAB(OT|PT|ST)/, [/^THERAPY SERVICES/i, /\bTHERAPY SERVICES\b/i, /HABILITAT/i, /\b(PHYSICAL|OCCUPATIONAL|SPEECH) THERAP/i]],
   [/CHIR/, [/CHIROPRACT/i]],
@@ -1319,7 +1322,6 @@ const AUTO = [
   [/HHC|HOMEHL|HOMEHEALTH/, [/HOME HEALTH/i]],
   [/SNF|SKNURS|SKILLED/, [/SKILLED NURSING/i]],
   [/INFERT|IVF|FERTIL/, [/INFERTIL/i, /FAMILY PLANNING/i]],
-  [/OBES|BARIAT/, [/OBESITY|BARIATRIC/i]],
   [/CONTACT|GLASS|VISION|EYE|LENS|FRAME/, [/\bVISION\b/i, /OPHTHALM/i, /\bEYE\b/i]],
   [/GEND/, [/GENDER/i]],
   [/ACUP/, [/ACUPUNCT/i]],
@@ -1804,7 +1806,7 @@ const SERVICE_HINTS = [
   [/HPV/, /\bhpv\b/], [/OSTEO/, /osteopor|bone density/], [/LIPID/, /lipid|cholesterol/], [/HIV/, /\bhiv\b/], [/CHLMYD/, /chlamydia/],
   [/GONORR/, /gonorrh/], [/SYPH/, /syphilis/], [/HEPAT|HEPTB/, /hepatitis/], [/BRSTFEED|BRPUMP/, /breast ?(feed|pump)|lactation/],
   [/LUNGC/, /lung cancer/], [/DEPRESS/, /depression/], [/ALCOHOL/, /alcohol/], [/WELLWO/, /well[- ]?wom[ae]n/], [/GYN/, /\bgyn/],
-  [/RTNPHYS/, /routine physical|annual physical|wellness exam/], [/EYEEX|EYEXAM|RTEYE/, /\beye exams?\b/], [/GLASS|LENS/, /glasses|lenses/], [/CONTACT/, /contact lens|contacts/],
+  [/RTNPHYS/, /routine physical|annual physical|adult physical|physical exam|wellness (exam|visit)/], [/DIASCRPR|GESTDIA/, /gestational diabetes/], [/DIASCR/, /diabetes screen|screening for diabetes/], [/EYEEX|EYEXAM|RTEYE/, /\beye exams?\b/], [/GLASS|LENS/, /glasses|lenses/], [/CONTACT/, /contact lens|contacts/],
   [/WIG/, /\bwigs?\b/], [/RETINO/, /retinopath/], [/VASECT/, /vasectom/], [/MASTEC/, /mastectomy|breast prosthe/], [/SUPORTH|SUPPHOSE|STOCKING/, /stocking|support hose/],
   [/BARIAT|OBESLIF/, /bariatric/], [/HEARAID/, /hearing aid/], [/INFERT/, /infertil/], [/OBULTR/, /ultrasound/], [/COCHL/, /cochlear/], [/BAHA|OSSEO/, /osseointegrat/],
   [/^PTTHER|PHYSTH/, /\b(pt|physical therap\w*)\b/], [/^OTTHER|OCCTH/, /\b(ot|occupational therap\w*)\b/], [/^STTHER|SPCHTH|SPEECH/, /\b(st|speech therap\w*)\b/]
@@ -2028,9 +2030,33 @@ function checkSummaryThenGrid(f, g){
     ? "The Benefit Summary has no standard reimbursement section for this plan. The percentages it lists are for other services" + where + ". Check this against the plan's cost shares."
     : "The Benefit Summary has no copay for the service this counter is for. The copays it lists are for other services" + where + ". Check this against the plan's cost shares." });
 }
+// A preventive counter whose section only says it follows the guidelines: the Benefit Summary may still give the
+// limit in a line that names the service in another section ("Routine Physical Exam: 1 per calendar year").
+// The same number and period is a match; a different number goes to Review so a person decides which applies.
+function elsewhereLimit(f, g, r0){
+  const hint = (SERVICE_HINTS.find(([re]) => re.test(f.counter)) || [])[1];
+  if (!hint) return null;
+  let diff = null;
+  for (const s of activeSections()) {
+    if (s === r0.sec || s.grid || /exclusion|coordination|subrogat|recover|eligib|timely filing/.test(s.tn)) continue;
+    const rows = s.rows.filter(x => x.usable && !x.header && !/^(current )?spd language|^suggested spd|^comments?\b|^questions?\b/.test(x.labelN) && hint.test(x.n) && limitNums(x, f).length);
+    if (!rows.length) continue;
+    const r = checkLimit(f, g, { id: "else:" + s.id, title: s.title, tn: s.tn, rows, virtual: true, plan: s.plan });
+    const link = { sec: s, how: "name" };
+    if (r.status === "match") return Object.assign({}, r, { sec: s, link, plainNote: true, note: ((r.note ? r.note + " " : "") + "Found in " + s.title + ". The preventive section doesn't list it.").trim() });
+    if (!diff && r.row) diff = Object.assign({}, r, { status: "partial", sec: s, link, plainNote: false, unsure: false,
+      note: "The preventive section doesn't list this, but " + s.title + " has a line for it that doesn't clearly agree. Check which applies." });
+  }
+  return diff;
+}
 function checkSummaryThenGrid0(f, g){
   const r = checkFact(f, g);
-  if (r.status === "guideline" && state.ppacaGrid && f.type === "limit") return checkPpaca(f, g, r);
+  if (r.status === "guideline" && f.type === "limit") {
+    const e = state.scoring ? null : elsewhereLimit(f, g, r);
+    if (e && e.status === "match") return e;
+    const p = state.ppacaGrid ? checkPpaca(f, g, r) : r;
+    return e && p.status !== "mismatch" ? e : p;
+  }
   if (r.status === "match" || f.type === "limit" || f.type === "info" || state.scoring || !state.ws || !state.ws.sections.some(s => s.grid)) return r;
   let r2; state.withGrid = true;
   try { r2 = checkFact(f, g); } finally { state.withGrid = false; }
@@ -3101,8 +3127,11 @@ if (typeof DecompressionStream === "undefined") $("#note").textContent = "This b
 // Keep the notes short and plain: a few one-line items a reviewer would notice, no internals.
 // The page can't contact anything, so checking for an update reloads it fresh from GitHub
 // and then shows What's new, marking what changed since the version that was open.
-const APP_VERSION = "1.6", APP_DATE = "Nov 12, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
+const APP_VERSION = "1.7", APP_DATE = "Nov 12, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
 const CHANGELOG = [
+  { v: "1.7", date: "Nov 12, 2026", items: [
+    "An obesity dollar limit (OBESTYYR1) is now checked against the Weight Loss Surgery section, not treated as preventive.",
+    "A preventive keyword (routine physical, diabetes screening) is now also looked up in the rest of the Benefit Summary."] },
   { v: "1.6", date: "Nov 12, 2026", items: [
     "A keyword for an archived PPACA measure is now checked against the measure it was folded into (HPV testing under Measure 9)."] },
   { v: "1.5", date: "Nov 12, 2026", items: [
