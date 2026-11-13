@@ -19,7 +19,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-EEXSdvXFvaYLzAC28PzMwy/32ogCTBMwpQHItGyj5Jw='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-gaPOVvMpUllGJWmp/61rfLWJJiC8/WAd4KoCdazLaBo='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="color-scheme" content="dark">
 <meta name="referrer" content="no-referrer">
 <meta name="google" content="notranslate">
@@ -144,10 +144,14 @@
   .summary{display:grid;grid-template-columns:auto 1fr;gap:22px;align-items:stretch;margin-top:8px}
   .score{background:linear-gradient(180deg,rgba(18,25,39,.9),rgba(13,18,27,.92));border:1px solid var(--line);border-radius:18px;padding:18px 26px;display:flex;align-items:center;gap:22px;box-shadow:0 0 60px -30px rgba(139,92,246,.5)}
   .ring{position:relative;width:132px;height:132px;flex:none}
-  .ring svg{width:100%;height:100%;transform:rotate(-90deg)}
+  .ring svg{width:100%;height:100%;transform:rotate(-90deg);position:relative;z-index:1;overflow:visible}
+  .ring::before{content:"";position:absolute;inset:-6px;border-radius:50%;background:conic-gradient(from 0deg,rgba(34,211,238,0),rgba(34,211,238,.6),rgba(139,92,246,.6),rgba(34,211,238,0) 78%);filter:blur(12px);opacity:.5;animation:ringSpin 7s linear infinite}
+  .ring .orbit{fill:none;stroke:rgba(125,211,252,.5);stroke-width:1.1;stroke-dasharray:1.5 8.8;stroke-linecap:round;transform-origin:60px 60px;animation:ringSpin 20s linear infinite reverse}
+  @keyframes ringSpin{to{transform:rotate(360deg)}}
+  @keyframes ringGlow{0%,100%{filter:drop-shadow(0 0 2px rgba(34,211,238,.35))}50%{filter:drop-shadow(0 0 7px rgba(139,92,246,.8))}}
   .ring .track{fill:none;stroke:#1A2232;stroke-width:11}
-  .ring .arc{fill:none;stroke:url(#ringGrad);stroke-width:11;stroke-linecap:round;stroke-dasharray:327;stroke-dashoffset:327;transition:stroke-dashoffset 1.4s cubic-bezier(.2,.7,.2,1)}
-  .ring-label{position:absolute;inset:0;display:grid;place-content:center;text-align:center}
+  .ring .arc{fill:none;stroke:url(#ringGrad);stroke-width:11;stroke-linecap:round;stroke-dasharray:327;stroke-dashoffset:327;transition:stroke-dashoffset 1.4s cubic-bezier(.2,.7,.2,1);animation:ringGlow 3.2s ease-in-out infinite}
+  .ring-label{position:absolute;inset:0;z-index:2;display:grid;place-content:center;text-align:center}
   .ring-label strong{font:800 30px var(--display);font-variant-numeric:tabular-nums}
   .ring-label small{font:600 10.5px var(--mono);letter-spacing:.14em;color:var(--muted)}
   .score-txt h3{margin:0;font:700 20px var(--display)}
@@ -282,8 +286,8 @@
     <div class="summary">
       <div class="score">
         <div class="ring">
-          <svg viewBox="0 0 120 120"><defs><linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22D3EE"/><stop offset="1" stop-color="#8B5CF6"/></linearGradient></defs>
-            <circle class="track" cx="60" cy="60" r="52"/><circle class="arc" id="ringArc" cx="60" cy="60" r="52"/></svg>
+          <svg viewBox="0 0 120 120"><defs><linearGradient id="ringGrad" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="120" y2="120"><stop offset="0" stop-color="#22D3EE"/><stop offset="1" stop-color="#8B5CF6"/><animateTransform attributeName="gradientTransform" type="rotate" from="0 60 60" to="360 60 60" dur="6s" repeatCount="indefinite"/></linearGradient></defs>
+            <circle class="orbit" cx="60" cy="60" r="59"/><circle class="track" cx="60" cy="60" r="52"/><circle class="arc" id="ringArc" cx="60" cy="60" r="52"/></svg>
           <div class="ring-label"><strong id="ringPct">0%</strong><small>MATCHED</small></div>
         </div>
         <div class="score-txt"><h3 id="scoreHead">Review complete</h3><p id="scoreSub"></p></div>
@@ -1495,7 +1499,7 @@ function describePeriod(p){
   if (p.kind === "life") return "per lifetime";
   if (p.kind === "pregnancy") return "per pregnancy";
   if (p.kind === "event") return "per " + p.what;
-  if (p.kind === "initial") return "in the first year";
+  if (p.kind === "initial") return "one time, within a set period";
   const yr = p.basis === "plan" ? "plan year" : p.basis === "rolling" ? "rolling year" : p.basis === "calendar" ? "calendar year" : "year";
   if (p.kind === "years") return p.n === 1 ? "per " + yr : "per " + p.n + " " + yr + "s";
   if (p.kind === "months") return "per " + p.n + (p.basis === "rolling" ? " rolling" : "") + " month" + (p.n === 1 ? "" : "s");
@@ -2388,7 +2392,7 @@ function renderChips(){
     c.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); c.click(); } };
   });
   const total = scored, pct = total ? Math.round(now.match / total * 100) : 0;
-  $("#ringPct").textContent = pct + "%";
+  countTo($("#ringPct"), pct);
   requestAnimationFrame(() => { $("#ringArc").style.strokeDashoffset = String(327 - 327 * pct / 100); });
   // What still needs a look: a Review someone called Match is done.
   const issues = total - now.match;
@@ -3165,64 +3169,40 @@ if (typeof DecompressionStream === "undefined") $("#note").textContent = "This b
 // Keep the notes short and plain: a few one-line items a reviewer would notice, no internals.
 // The page can't contact anything, so checking for an update reloads it fresh from GitHub
 // and then shows What's new, marking what changed since the version that was open.
-const APP_VERSION = "2.0", APP_DATE = "Nov 12, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
+const APP_VERSION = "1.0", APP_BUILD = 21, APP_DATE = "Nov 13, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
 const CHANGELOG = [
-  { v: "2.0", date: "Nov 12, 2026", items: [
-    "A keyword that agrees with one of a measure's frequency lines is a Match again (3 per year and \"Three per year\"). The row says which line it matched."] },
-  { v: "1.9", date: "Nov 12, 2026", items: [
-    "PPACA matches are stricter. When a measure lists more than one frequency and the tool can't tell which is the keyword's, the row goes to Review."] },
-  { v: "1.8", date: "Nov 12, 2026", items: [
-    "Two named points in a pregnancy on the PPACA grid now count as 2 (gestational diabetes screening, DIASCRPR)."] },
-  { v: "1.7", date: "Nov 12, 2026", items: [
-    "An obesity dollar limit (OBESTYYR1) is now checked against the Weight Loss Surgery section, not treated as preventive.",
-    "A preventive keyword (routine physical, diabetes screening) is now also looked up in the rest of the Benefit Summary."] },
-  { v: "1.6", date: "Nov 12, 2026", items: [
-    "A keyword for an archived PPACA measure is now checked against the measure it was folded into (HPV testing under Measure 9)."] },
-  { v: "1.5", date: "Nov 12, 2026", items: [
-    "The PPO Plan and Copay Plan fix from 1.4 now works on more summary layouts."] },
-  { v: "1.4", date: "Nov 12, 2026", items: [
-    "A plan named one way on the cover and another way in the tables (PPO Plan and Copay Plan) is now treated as one plan.",
-    "Habilitative therapy counters like HABOTPTVS are checked against the therapy section.",
-    "Riders written as Rider = code are read from the cover."] },
-  { v: "1.3", date: "Nov 9, 2026", items: [
-    "PPACA checks are stricter. A frequency that differs from the PPACA grid is now a Mismatch.",
-    "Fixed limits written in words, like Twice per year, being skipped.",
-    "Fixed two limits in one sentence getting mixed up.",
-    "If the tool can't tell which plan the export is for, those results go to Review.",
-    "Added a Remove grids link in box 3."] },
-  { v: "1.2", date: "Nov 9, 2026", items: [
-    "Copays and coinsurance are no longer called a Mismatch against a different service's line.",
-    "Specialist copays are checked against specialist lines.",
-    "Better plan choice when a cost share grid is loaded."] },
-  { v: "1.1", date: "Nov 9, 2026", items: [
-    "Added this What's new box."] },
-  { v: "1.0", date: "Nov 9, 2026", items: [
-    "The tool is now on GitHub with a version number and Check for updates.",
-    "Box 3 for the cost share grid and the PPACA grid.",
-    "The tool finds the export's plan in the cost share grid.",
-    "PPACA checks are compared to the PPACA grid.",
-    "Clicking Match or Mismatch updates the percentage.",
-    "Words like single count as numbers.",
-    "Moving background and a new icon."] }
+  { v: "1.0", date: "Nov 13, 2026", items: ["Bug fixes and improvements."] }
 ];
 // "1.10" is newer than "1.9".
 const verNum = v => String(v).split(".").map(n => parseInt(n, 10) || 0);
 const newerThan = (a, b) => { const x = verNum(a), y = verNum(b); for (let i = 0; i < Math.max(x.length, y.length); i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
+// The percentage counts up or down to its new value. The final value is set at once when motion is turned off.
+function countTo(el, to){
+  const from = parseInt(el.textContent, 10) || 0, t0 = performance.now(), ms = 800;
+  cancelAnimationFrame(el._raf); el.dataset.value = to;
+  if (from === to || matchMedia("(prefers-reduced-motion: reduce)").matches) { el.textContent = to + "%"; return; }
+  const step = now => { const k = Math.min(1, (now - t0) / ms), e = 1 - Math.pow(1 - k, 3);
+    el.textContent = Math.round(from + (to - from) * e) + "%"; if (k < 1) el._raf = requestAnimationFrame(step); };
+  el._raf = requestAnimationFrame(step);
+}
 function toast(msg){
   const t = $("#toast"); if (!t) return;
   t.textContent = msg; t.classList.add("show");
   clearTimeout(toast.timer); toast.timer = setTimeout(() => t.classList.remove("show"), 7000);
 }
+// "was" is what the page saved before it reloaded: "version|build". The build number only goes up, so the check
+// still works after the version numbers started over at 1.0. A saved value with no build is from before that.
 function showWhatsNew(was){
   const box = $("#whatsNew");
-  const updated = was && newerThan(APP_VERSION, was);
+  const [wasVer, wasB] = was == null ? [null, null] : String(was).split("|"), old = was != null && wasB === undefined, wasBuild = old ? 0 : (parseInt(wasB, 10) || 0);
+  const updated = was != null && wasBuild < APP_BUILD;
   $("#wnStatus").textContent = was == null ? "You're on version " + APP_VERSION + "."
-    : updated ? "Updated to version " + APP_VERSION + " (was " + was + "). The changes marked New are since your last version."
-    : newerThan(was, APP_VERSION) ? "GitHub sent an older copy (" + APP_VERSION + ") than the one you had (" + was + "). Wait a minute and check again."
+    : updated ? "Updated to version " + APP_VERSION + (old ? ". Version numbers start over at 1.0 with this update." : wasVer === APP_VERSION ? ". This is a newer copy of the same version." : " (was " + wasVer + "). The changes marked New are since your last version.")
+    : wasBuild > APP_BUILD ? "GitHub sent an older copy than the one you had. Wait a minute and check again."
     : "You're on the latest version (" + APP_VERSION + ").";
   $("#wnList").classList.toggle("since", !!updated);
   $("#wnList").innerHTML = CHANGELOG.map(r => {
-    const isNew = updated && newerThan(r.v, was);
+    const isNew = updated && (old || newerThan(r.v, wasVer));
     return "<section class='wnv" + (isNew ? " new" : "") + "'><h4>Version " + esc(r.v) + " <span>" + esc(r.date) + "</span>" + (isNew ? "<b>New</b>" : "") + "</h4><ul>" +
       r.items.map(x => "<li>" + esc(x) + "</li>").join("") + "</ul></section>";
   }).join("");
@@ -3255,7 +3235,7 @@ function hideWhatsNew(){ $("#whatsNew").hidden = true; }
       clearTimeout(armTimer); armTimer = setTimeout(() => { armed = false; b.textContent = "Check for updates"; }, 7000);
       return;
     }
-    try { sessionStorage.setItem("bkr_ver_check", APP_VERSION); } catch (e) {}
+    try { sessionStorage.setItem("bkr_ver_check", APP_VERSION + "|" + APP_BUILD); } catch (e) {}
     location.replace(location.pathname + "?v=" + Date.now());
   };
 })();
