@@ -19,7 +19,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-gaPOVvMpUllGJWmp/61rfLWJJiC8/WAd4KoCdazLaBo='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-Iaiq1WFORvUH1HlFjoLpGcx5Ixz046We9wO+3ab7OwU='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="color-scheme" content="dark">
 <meta name="referrer" content="no-referrer">
 <meta name="google" content="notranslate">
@@ -1849,6 +1849,16 @@ function clearIn(pairs, f){
 // Whole sentences, so "30 visit maximum, per lifetime" keeps its period. Sentences for another plan are left out.
 const planSentences = r => r.n.split(SENT_SPLIT).filter(sn => { const p = planOf(sn); return !state.plan || !p || p === state.plan; });
 const rowPairs = rows => rows.flatMap(r => planSentences(r).map(ph => ({ r, ph })));
+// A sentence typed across several lines of a cell ("...and contact lenses or / up to two pairs of prescription glasses /
+// following cataract surgery...") is one sentence: a line that ends or starts with a joining word continues it.
+const MID_END = /(?:\b(?:or|and|of|the|to|a|an|with|for|in|on|by|per|including|following|after|within|from|that|which|is|are|be)|,)$/;
+const MID_START = /^(?:following|after|within|if|when|and|or|per|for|of|to|in|including|except|unless|provided|as|that|which|with)\b/;
+function wholeSentences(r){
+  if (!r._ws) r._ws = r.n.split(/;\s+|\.\s+|\s+\|\s+/).flatMap(sn => { const out = [];
+    for (const p of sn.split(/\s+\/\s+/)) { if (out.length && (MID_END.test(out[out.length - 1]) || MID_START.test(p))) out[out.length - 1] += " " + p; else out.push(p); }
+    return out; });
+  return r._ws.filter(sn => { const p = planOf(sn); return !state.plan || !p || p === state.plan; });
+}
 // How many different services are checked against a section. A limit line for a whole section that several
 // services share (Preventive Care, Vision) may be about another of them, so it isn't enough for a mismatch.
 // "SNFVST" and "SNFYR1" are one service; "CONTACT" and "GLASSES" are two.
@@ -1903,7 +1913,7 @@ function checkLimit0(f, g, sec){
   // is about it in every sentence.
   // Only a real label counts: a short first cell of a table row, not a paragraph that mentions many services.
   const labelNames = r => !r.para && r.content.length >= 2 && r.labelN.length <= 80 && hint.test(r.labelN);
-  const namedIn = r => planSentences(r).filter(sn => (hint.test(sn) || labelNames(r)) && textNums(sn, f, r).length);
+  const namedIn = r => wholeSentences(r).filter(sn => (hint.test(sn) || labelNames(r)) && textNums(sn, f, r).length);
   const named = hint ? rows.filter(r => namedIn(r).length) : [];
   const tiers = [named, tier1.length ? tier1 : tier2];
   for (const tier of tiers) {
@@ -3169,9 +3179,9 @@ if (typeof DecompressionStream === "undefined") $("#note").textContent = "This b
 // Keep the notes short and plain: a few one-line items a reviewer would notice, no internals.
 // The page can't contact anything, so checking for an update reloads it fresh from GitHub
 // and then shows What's new, marking what changed since the version that was open.
-const APP_VERSION = "1.0", APP_BUILD = 21, APP_DATE = "Nov 13, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
+const APP_VERSION = "1.1", APP_BUILD = 22, APP_DATE = "Nov 13, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
 const CHANGELOG = [
-  { v: "1.0", date: "Nov 13, 2026", items: ["Bug fixes and improvements."] }
+  { v: APP_VERSION, date: APP_DATE, items: ["Bug fixes and improvements."] }
 ];
 // "1.10" is newer than "1.9".
 const verNum = v => String(v).split(".").map(n => parseInt(n, 10) || 0);
