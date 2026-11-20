@@ -19,7 +19,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-ELWSLwIMe62ohqAffbnqHjUzoW9bg8kwaAAxOuAhDhw='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-wGofQzvOjANt2Kf95eNP/17cyIpTk0Xik47kuw2Mi84='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="color-scheme" content="dark">
 <meta name="referrer" content="no-referrer">
 <meta name="google" content="notranslate">
@@ -801,16 +801,20 @@ function prepWorksheet(raw, name){
     });
     rows.forEach(r => { if (r.box && !r.checked) r.usable = false; });
     // Column headings such as "Benefit | In-Network | Out-of-Network" name the cells under them.
-    let header = null, headerTable = null;
+    // Two heading rows in a row ("IN NETWORK | OUT OF NETWORK" over "INDIVIDUAL | FAMILY | INDIVIDUAL | FAMILY") stack:
+    // each column keeps the heading above it as well as its own.
+    let header = null, headerTable = null, stacked = false;
     for (const r of rows) {
-      if (r.table !== headerTable) { header = null; headerTable = r.table; }
+      if (r.table !== headerTable) { header = null; headerTable = r.table; stacked = false; }
       if (r.para) continue;
       // A label with its answer ("Subject to Deductible: | _X__ Yes ____ No") is not a heading.
       // Nor is a limit written in words ("Benefit Limits | Twice per year").
       const looksHeader = r.usable && !r.inGroup && r.content.length >= 2 && !r.checked && !r.box && !/\d/.test(r.text) && !countNums(r.n).length &&
         r.content.every(c => c.t.length <= 60 && !/\?\s*$/.test(c.t)) && COLWORD.test(r.n) &&
         !/:\s*$/.test(r.content[0].t) && !r.content.some(c => /_{2,}|(^|\s)(yes|no)(\s|$)/i.test(c.t));
-      if (looksHeader) { r.header = true; header = {}; r.content.forEach(c => { for (let k = 0; k < c.span; k++) header[c.c + k] = c.t; }); continue; }
+      if (looksHeader) { r.header = true; const up = stacked ? header : null; header = {};
+        r.content.forEach(c => { for (let k = 0; k < c.span; k++) { const u = up && up[c.c + k]; header[c.c + k] = (u && u !== c.t ? u + " / " : "") + c.t; } }); stacked = true; continue; }
+      stacked = false;
       // A cell that stretches under more than one heading ("$500" under both In-Network and Out-of-Network) has all of them.
       if (header) { r.content.forEach(c => { const hs = []; for (let k = 0; k < (c.span || 1); k++) if (header[c.c + k] && !hs.includes(header[c.c + k])) hs.push(header[c.c + k]);
         c.hdr = hs.join(" / "); c.hdrN = norm(c.hdr); }); r.hdrText = norm(r.content.map(c => c.hdr).join(" ")); }
@@ -1677,7 +1681,8 @@ function checkCopay(f, g){
     note: "This keyword also has the " + uniq(g.svcAll.flat()).join(", ") + " limit, and that section lists this copay." };
   const hint = f.counter ? (COPAY_HINTS.find(([re]) => re.test(f.counter)) || [])[1] : null;
   if (hint) {
-    const names = m => hint.test([m.ph, m.cellN, m.hdrN, m.row.labelN, m.row.n].join(" ")) || hint.test(m.sec.tn);
+    // The table's own heading counts too ("Emergency Room Setting | Percentage | ... | Copay Applies").
+    const names = m => hint.test([m.ph, m.cellN, m.hdrN, m.row.labelN, m.row.n, m.row.hdrText || ""].join(" ")) || hint.test(m.sec.tn);
     let named = cands.filter(names);
     // A counter named for a service ("DIABCOPAY", "OPCOPAY") looks for that service's copay anywhere in the Benefit Summary.
     if (!named.length) { const wide = byNet(mentionsIn(activeSections(), "money").filter(isCopay), f.net).filter(names); if (wide.length) { named = wide; cands = uniq(cands.concat(wide)); } }
@@ -1792,6 +1797,8 @@ const PAIRISH = /^(pair|set|acquisition)/;
 const IS_HEARAID = c => /HEARAID|HEARINGAID|HEARAD/.test(c || "");
 // Glasses and contacts are not counted in eye exams ("One eye exam to receive a prescription and contact lenses").
 const IS_EYEWEAR = c => /CONTACT|CNTLENS|GLASS|LENS|FRAME/.test(c || "");
+// A pair of glasses is counted as 1 on some counters and as 2 on others (two lenses, or frames and lenses).
+const IS_GLASSES = c => /GLASS|EYEGL|FRAME|LENS/.test(c || "") && !IS_CONTACTS(c);
 // Counters for one network ("CHIRINYR1", "OTVSTONYR") only match limits for that network.
 const counterNet = c => { const m = /[A-Z](IN|ON)(?:YR|LF|LIFE)\d*$/.exec(c || ""); return m ? (m[1] === "IN" ? "in" : "out") : ""; };
 function textNums(ph, f, r){
@@ -1800,8 +1807,16 @@ function textNums(ph, f, r){
   // "One implant per ear" is two per person: a keyword may count both ears on one counter or one ear on each.
   const ear = /\bper ear\b/.test(ph), both = ear && !IS_HEARAID(f.counter);
   const out = countNums(ph).filter(x => !(IS_EYEWEAR(f.counter) && /^(exam|screening|test)/.test(x.unit)))
-    .flatMap(x => (IS_CONTACTS(f.counter) && PAIRISH.test(x.unit)) || (ear && !both) ? [x.n * 2] : both ? [x.n, x.n * 2] : [x.n]);
+    .flatMap(x => (IS_CONTACTS(f.counter) && PAIRISH.test(x.unit)) || (ear && !both) ? [x.n * 2] : both || (IS_GLASSES(f.counter) && PAIRISH.test(x.unit)) ? [x.n, x.n * 2] : [x.n]);
   if (/^\d[\d,]*$/.test(ph) && r && /visit|day|session|treatment|limit|maximum|\bmax\b|per year|annual/.test(r.labelN + " " + r.hdrText)) out.push(num(ph));
+  // A counter named for hours ("DIAB02HR1") reads only the hour counts of a line that has some
+  // ("1 Retinopathy screening per calendar year. Training: 10 hours first year; then two additional hours").
+  if (r && /HR\d*$/.test(f.counter || "")) { if (r._hrs === undefined) r._hrs = countNums(r.n).some(x => /^hour/.test(x.unit));
+    if (r._hrs) return countNums(ph).filter(x => /^hour/.test(x.unit)).map(x => x.n); }
+  // A limit line that opens with a count of something the tool has no unit for ("Lifetime Benefit Maximum: 1 auditory
+  // brain stem implant for an individual 12 and older") still gives that count.
+  if (!out.length && r && isLimitLabel(r)) { const m = /^(\d{1,3})\s+(?!and\b|or\b|to\b|of\b|older\b|years?\b|months?\b|weeks?\b|days?\b|hours?\b|percent\b)[a-z]/.exec(ph);
+    if (m && r.n.split(SENT_SPLIT).slice(1).join(" ").trim().startsWith(ph.slice(0, 12))) out.push(num(m[1])); }
   return out;
 }
 // The phrases of a row that apply to the compared plan: a sentence that names another plan
@@ -1825,7 +1840,7 @@ const SERVICE_HINTS = [
   [/HPV/, /\bhpv\b/], [/OSTEO/, /osteopor|bone density/], [/LIPID/, /lipid|cholesterol/], [/HIV/, /\bhiv\b/], [/CHLMYD/, /chlamydia/],
   [/GONORR/, /gonorrh/], [/SYPH/, /syphilis/], [/HEPAT|HEPTB/, /hepatitis/], [/BRSTFEED|BRPUMP/, /breast ?(feed|pump)|lactation/],
   [/LUNGC/, /lung cancer/], [/DEPRESS/, /depression/], [/ALCOHOL/, /alcohol/], [/WELLWO/, /well[- ]?wom[ae]n/], [/GYN/, /\bgyn/],
-  [/RTNPHYS/, /routine physical|annual physical|adult physical|physical exam|wellness (exam|visit)/], [/DIASCRPR|GESTDIA/, /gestational diabetes/], [/DIASCR/, /diabetes screen|screening for diabetes/], [/EYEEX|EYEXAM|RTEYE/, /\beye exams?\b/], [/GLASS|LENS/, /glasses|lenses/], [/CONTACT/, /contact lens|contacts/],
+  [/RTNPHYS/, /routine physical|annual physical|adult physical|physical exam|wellness (exam|visit)/], [/HABIL?SP|HABSP|HABST/, /\b(st|speech therap\w*)\b/], [/DIASCRPR|GESTDIA/, /gestational diabetes/], [/DIASCR/, /diabetes screen|screening for diabetes/], [/EYEEX|EYEXAM|RTEYE/, /\beye exams?\b/], [/GLASS|LENS/, /glasses|lenses/], [/CONTACT/, /contact lens|contacts/],
   [/WIG/, /\bwigs?\b/], [/RETINO/, /retinopath/], [/VASECT/, /vasectom/], [/MASTEC/, /mastectomy|breast prosthe/], [/SUPORTH|SUPPHOSE|STOCKING/, /stocking|support hose/],
   [/BARIAT|OBESLIF/, /bariatric/], [/HEARAID/, /hearing aid/], [/INFERT/, /infertil/], [/OBULTR/, /ultrasound/], [/COCHL/, /cochlear/], [/BAHA|OSSEO/, /osseointegrat/],
   [/^PTTHER|PHYSTH/, /\b(pt|physical therap\w*)\b/], [/^OTTHER|OCCTH/, /\b(ot|occupational therap\w*)\b/], [/^STTHER|SPCHTH|SPEECH/, /\b(st|speech therap\w*)\b/]
@@ -1857,9 +1872,11 @@ function clearIn(pairs, f){
   // A counter for one network ("PTVSTONYR") is only compared with that network's sentences.
   const cnet = counterNet(f.counter);
   const all = pairs.filter(({ ph }) => { const n = netOf(ph); return !cnet || !n || n === "both" || n === cnet; }).flatMap(({ r, ph }) => numPeriods(ph, f, r));
+  // A pair of glasses reads as 1 or 2, which is still one clear amount.
+  const one = a => a.length === 1 || (IS_GLASSES(f.counter) && a.length === 2 && Math.max(...a) === 2 * Math.min(...a));
   const same = uniq(all.filter(x => x.st === "same").map(x => x.n));
-  if (same.length) return same.length === 1;
-  return uniq(all.filter(x => x.st === "unstated").map(x => x.n)).length === 1;
+  if (same.length) return one(same);
+  return one(uniq(all.filter(x => x.st === "unstated").map(x => x.n)));
 }
 // Whole sentences, so "30 visit maximum, per lifetime" keeps its period. Sentences for another plan are left out.
 const planSentences = r => r.n.split(SENT_SPLIT).filter(sn => { const p = planOf(sn); return !state.plan || !p || p === state.plan; });
@@ -1968,6 +1985,11 @@ function checkLimit0(f, g, sec){
       else if (pair) unitNote = fmtNum(pair.n) + " " + pair.unit.replace(/s$/, "") + (pair.n === 1 ? "" : "s") + " in the Benefit Summary " + (pair.n === 1 ? "is" : "are") + " counted as " + fmtNum(f.amount) + (/CONTACT|CNTLENS/.test(f.counter) ? " lenses." : ".");
       else if ((f.unit === "days" && /^visit/.test(w)) || (f.unit === "visits" && /^day/.test(w))) unitNote = "The Benefit Summary says " + w + " and the keyword counts " + f.unit + ", which are treated as the same.";
     }
+    // Glasses are usually counted 1 for each pair. Twice the pairs fits only if this counter counts each lens, or frames
+    // and lenses apart, which the tool can't see: a person decides.
+    if (!f.dollars) { const cn = countNums(bestPh), gp = IS_GLASSES(f.counter) && !cn.some(x => eq(x.n, f.amount)) && cn.find(x => PAIRISH.test(x.unit) && eq(x.n * 2, f.amount));
+      if (gp) return { status: "partial", sec: s, row: best, hl, link, note: "The Benefit Summary says " + fmtNum(gp.n) + " pair" + (gp.n === 1 ? "" : "s") + " and the keyword has " + fmtNum(f.amount) +
+        ". That agrees only if this counter counts each lens, or frames and lenses, on its own. Glasses counters usually count 1 for each pair, so check how this one counts." }; }
     if (loose) return { status: "partial", sec: s, row: best, hl, link, note: "Found in the section's text, not in a Benefit Limits line. Check that it applies to this benefit." };
     // Another limit line for this service gives a different number for the same period
     // ("Calendar Year Maximum: 30 Visits" and "limited to a maximum of 36 visits per Calendar Year"): a person decides.
@@ -2160,7 +2182,10 @@ function checkFact(f, g){
       const hits = mentionsIn(activeSections(), "money").filter(m => eq(m.v, f.amount) && !/deductible|out[- ]of[- ]pocket|\boop\b/.test(m.sec.tn + " " + m.row.labelN + " " + m.hdrN));
       const copayHit = hits.find(m => /\bco-?pay/.test(m.ph + " " + m.hdrN + " " + m.row.labelN));
       // Keywords take penalties as a copay, but not when the Benefit Summary lists the same amount as a copay too.
-      const pen = copayHit ? { status: "" } : checkPenalty(f);
+      // A counter named for a visit (specialist, ER, office, urgent care, drugs) is that visit's copay, never a penalty.
+      // Inpatient and outpatient copay counters can carry a prior approval penalty (an organ transplant penalty on IPCOPAY).
+      const visit = /SPEC|^ER|EMERG|^OV|OFFIC|PCP|PHYS|^UC|URG|^RX|DRUG|GENER|BRAND|TELE|CHIRO/.test(f.counter || "") && !/PENAL/.test(f.counter || "");
+      const pen = copayHit || visit ? { status: "" } : checkPenalty(f);
       if (pen.status === "match") r = Object.assign(pen, { asPenalty: true, plainNote: true,
         note: "Keywords take penalties as a copay. The Benefit Summary lists " + fmtMoney(f.amount) + " as a penalty, not a copay." });
       // The amount is in the Benefit Summary, just not worded as a copay: the reviewer decides.
@@ -3204,7 +3229,7 @@ if (typeof DecompressionStream === "undefined") $("#note").textContent = "This b
 // Keep the notes short and plain: a few one-line items a reviewer would notice, no internals.
 // The page can't contact anything, so checking for an update reloads it fresh from GitHub
 // and then shows What's new, marking what changed since the version that was open.
-const APP_VERSION = "1.3", APP_BUILD = 24, APP_DATE = "Nov 20, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
+const APP_VERSION = "1.4", APP_BUILD = 25, APP_DATE = "Nov 20, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
 const CHANGELOG = [
   { v: APP_VERSION, date: APP_DATE, items: ["Bug fixes and improvements."] }
 ];
