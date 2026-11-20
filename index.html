@@ -19,7 +19,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-Iaiq1WFORvUH1HlFjoLpGcx5Ixz046We9wO+3ab7OwU='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-mrce0gUFMxkfvmPSZYfMgVxeOzA8W4rpkJrGDmnTUaE='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="color-scheme" content="dark">
 <meta name="referrer" content="no-referrer">
 <meta name="google" content="notranslate">
@@ -647,6 +647,8 @@ function planOf(n){
 const CLAUSE_SPLIT = /;\s+|\.\s+|\s+\|\s+/;
 const SUB_SPLIT = /\s+\/\s+|,\s+(?=\D)/;
 const NUM_ANY = /\$\s?\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s?%/g;
+// In a deductible or out-of-pocket row an amount is sometimes typed with no dollar sign ("single only enrollment: 3,000").
+const NUM_ACCUM = /\$\s?\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s?%|(?<![\d,.$\/-])\d{1,3}(?:,\d{3})+(?![\d,.\/-]|\s?%)/g;
 // The closest words on either side of a number, widening one word at a time. If the two sides
 // disagree ("Individual $800 Family $1,600" with no separator), the answer is unclear.
 function nearest(before, after, fn){
@@ -832,6 +834,13 @@ function prepWorksheet(raw, name){
   });
   // A plain repeated ending ("... \u2013 STANDARD", "... \u2013 OPTION B") is a plan only when another ending
   // shares one of its section names, as in "DEDUCTIBLE \u2013 COPAY PLAN" and "DEDUCTIBLE \u2013 HDHP".
+  // "HDHP" and "HDHP PLAN" (or "... OPTION") name one plan: the short form is counted and read as the longer one.
+  const sameAs = {};
+  const fold = names => names.forEach(a => { for (const w of [" plan", " option"]) if (!sameAs[a] && names.includes(a + w)) sameAs[a] = a + w; });
+  fold(Object.keys(counts).concat(Object.keys(bases)));
+  Object.keys(sameAs).forEach(a => { const b = sameAs[a];
+    if (counts[a]) { counts[b] = (counts[b] || 0) + counts[a]; delete counts[a]; }
+    if (bases[a]) { bases[b] = bases[b] || new Set(); bases[a].forEach(v => bases[b].add(v)); delete bases[a]; } });
   const shared = x => [...(bases[x] || [])].some(b => Object.keys(bases).some(y => y !== x && bases[y].has(b)));
   const plans = Object.keys(counts).filter(x => counts[x] >= 2 && (PLAN_WORD.test(x) || shared(x)));
   // A heading row names plans only when at least two of its plan columns have amounts under them
@@ -866,15 +875,18 @@ function prepWorksheet(raw, name){
       if (uniq(list.map(([, pre]) => pre.map(norm).join("|"))).length >= 2) list.forEach(([s, pre]) => prefixOf.set(s, pre));
     prefixOf.forEach(pre => pre.forEach(t => { const x = norm(t); if (!plans.includes(x)) plans.push(x); labels[x] = labels[x] || t; }));
   }
-  setPlanKeys(plans);
+  fold(plans);
+  Object.keys(sameAs).forEach(a => { if (!plans.includes(sameAs[a])) { delete sameAs[a]; return; } const i = plans.indexOf(a); if (i >= 0) plans.splice(i, 1); });
+  const canon = x => sameAs[x] || x;
+  setPlanKeys(plans.concat(Object.keys(sameAs)), sameAs);
   sections.forEach(s => {
     if (s.intro) return;
     const parts = s.title.split(/\s[\u2013\u2014-]\s/), br = /\(([^()]{2,40})\)\s*$/.exec(s.title);
-    const tok = [parts.length > 1 ? parts[parts.length - 1] : "", parts.length > 1 ? parts[0] : "", br ? br[1] : ""].map(norm).find(x => x && plans.includes(x));
+    const tok = [parts.length > 1 ? parts[parts.length - 1] : "", parts.length > 1 ? parts[0] : "", br ? br[1] : ""].map(x => canon(norm(x))).find(x => x && plans.includes(x));
     s.plan = tok || (heads.length >= 2 && heads.includes(s.tn) ? s.tn : "");
     // A section under more than one plan heading ("UNION CORE HDHP / NON-UNION CORE HDHP / ...") is for each of them.
     const pre = prefixOf.get(s);
-    if (pre) { const ps = uniq(pre.map(norm)); if (ps.length === 1) s.plan = ps[0]; else { s.plan = ""; s.plans = ps; } }
+    if (pre) { const ps = uniq(pre.map(x => canon(norm(x)))); if (ps.length === 1) s.plan = ps[0]; else { s.plan = ""; s.plans = ps; } }
   });
   // A plan heading can land inside another plan's table as a paragraph ("FIELD PLAN / Individual Calendar Year
   // Deductible / $1,200 / ..." under OFFICE PLAN). Those rows go to a section of their own for that plan.
@@ -930,10 +942,11 @@ function prepWorksheet(raw, name){
   }); });
   sections.forEach(s => s.rows.forEach(r => {
     if (r.header) return;
+    const accumRow = (DED_RE.test(r.labelN) || OOP_RE.test(r.labelN)) && (DED_RE.test(s.tn) || OOP_RE.test(s.tn));
     r.content.forEach((c, ci) => {
       const others = norm(r.content.filter((_, k) => k !== ci).map(x => x.t).join(" | "));
       for (const cl of c.n.split(CLAUSE_SPLIT)) { const subs = cl.split(SUB_SPLIT); for (let spi = 0; spi < subs.length; spi++) { const sp = subs[spi];
-        const ms = [...sp.matchAll(NUM_ANY)];
+        const ms = [...sp.matchAll(accumRow ? NUM_ACCUM : NUM_ANY)];
         ms.forEach((m, i) => {
           const after = sp.slice(m.index + m[0].length, i + 1 < ms.length ? ms[i + 1].index : sp.length);
           const before = sp.slice(i > 0 ? ms[i - 1].index + ms[i - 1][0].length : 0, m.index);
@@ -3179,7 +3192,7 @@ if (typeof DecompressionStream === "undefined") $("#note").textContent = "This b
 // Keep the notes short and plain: a few one-line items a reviewer would notice, no internals.
 // The page can't contact anything, so checking for an update reloads it fresh from GitHub
 // and then shows What's new, marking what changed since the version that was open.
-const APP_VERSION = "1.1", APP_BUILD = 22, APP_DATE = "Nov 13, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
+const APP_VERSION = "1.2", APP_BUILD = 23, APP_DATE = "Nov 20, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
 const CHANGELOG = [
   { v: APP_VERSION, date: APP_DATE, items: ["Bug fixes and improvements."] }
 ];
