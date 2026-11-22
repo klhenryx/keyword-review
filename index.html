@@ -19,7 +19,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-m6fLwIVv4WNFG6J41NI8cOBnJtRzelYmQ7Gss3JHDWA='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-jQgbss8+KaQtWeXGMkCdYPd6RkrSuR/xRezzcaamYDg='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="color-scheme" content="dark">
 <meta name="referrer" content="no-referrer">
 <meta name="google" content="notranslate">
@@ -240,6 +240,7 @@
   .so-row{padding:10px 0;border-top:1px solid var(--line);font-size:14px;line-height:1.45}
   .so-row b{display:block;color:var(--text);font-weight:600;margin-bottom:2px}
   .so-row span{color:var(--muted)}
+  .so-row i{display:block;margin-top:4px;font-style:normal;color:var(--cyan)}
   .help{margin-top:30px;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
   .help div{border:1px solid var(--line);border-radius:16px;padding:18px 20px;background:rgba(13,18,27,.6);font-size:15px;color:var(--muted)}
   .help b{display:block;color:var(--text);font:700 16px var(--display);margin-bottom:6px}
@@ -2534,12 +2535,26 @@ function summaryOnly(){
   const used = new Set(state.groups.filter(g => g.sec).map(g => g.sec.id));
   const skip = /exclusion|coordination|subrogat|recover|eligib|timely filing|definitions?|prior approval|precert/;
   const out = [];
+  state.groups.forEach(g => { g.also = ""; });
   for (const s of activeSections()) {
     if (s.grid || s.intro || s.ppaca || s.virtual || used.has(s.id) || skip.test(s.tn) || DED_RE.test(s.tn) || OOP_RE.test(s.tn)) continue;
     const rows = s.rows.filter(r => r.usable && !r.header && isLimitLabel(r) && !/\?\s*$/.test(r.labelN) && !/not handled in claims/.test(r.n) &&
       !/^(no|none|n\/a|not applicable)\b/.test(norm(r.cells[1] || "")) && !(/\bnone\b/.test(r.n) && /\bother\b/.test(r.n)) &&
       planPhrases(r).some(ph => countNums(ph).length || /\$\s?\d/.test(ph)));
-    if (rows.length) out.push({ title: s.title, text: rows.map(r => r.text).join(" / ") });
+    if (!rows.length) continue;
+    // A keyword with the same limit may cover it under a counter whose name doesn't say the service (THERAPY1, THERAPY6
+    // carrying the chiropractic visits). Only such general counters are offered; one named for a service is not.
+    const may = [];
+    for (const g of state.groups) { const f = g.fact; if (!f || f.type !== "limit" || !g.sec || g.sec.id === s.id || may.length >= 3) continue;
+      if (!/^(THERAPY|THERAP|THER|VISITS?|VST|MISC|OTHER|GENERAL|GEN)\d*$/.test(f.counter || "") || g.status !== "match") continue;
+      let st = ""; try { st = checkLimit(f, g, Object.assign({}, s, { rows, virtual: true })).status; } catch (e) { st = ""; }
+      if (st === "match" && !may.some(m => m.counter === f.counter)) may.push({ counter: f.counter, g });
+    }
+    // Same limit on a general counter: the section is covered. It leaves this list and the keyword row says so.
+    if (may.length) { const txt = rows.map(r => r.text.replace(/^.*\|\s*/, "").replace(/^(yes|x)?[\s\/]*(if yes,? list:?)?[\s\/\-]*/i, "")).join(" / ");
+      may.forEach(m => { m.g.also = (m.g.also ? m.g.also + " " : "") + "Also matches " + s.title + ": " + (txt.length > 140 ? txt.slice(0, 140) + "..." : txt.replace(/\.$/, "")) + "."; });
+      continue; }
+    out.push({ title: s.title, text: rows.map(r => r.text).join(" / "), hint: "" });
   }
   return out;
 }
@@ -2550,7 +2565,7 @@ function renderSummaryOnly(){
   box.style.display = list.length ? "" : "none";
   if (!list.length) return;
   $("#sumOnlyTitle").textContent = "In the Benefit Summary with no keyword check (" + list.length + ")";
-  $("#sumOnlyList").innerHTML = list.map(x => "<div class='so-row'><b>" + esc(x.title) + "</b><span>" + esc(x.text.length > 420 ? x.text.slice(0, 420) + "..." : x.text) + "</span></div>").join("");
+  $("#sumOnlyList").innerHTML = list.map(x => "<div class='so-row'><b>" + esc(x.title) + "</b><span>" + esc(x.text.length > 420 ? x.text.slice(0, 420) + "..." : x.text) + "</span>" + (x.hint ? "<i>" + esc(x.hint) + "</i>" : "") + "</div>").join("");
 }
 function render(){
   renderChips();
@@ -2623,6 +2638,7 @@ function itemHtml(g, i){
   if (kv.v) h += "<div class='val' style='margin-top:6px'>" + esc(kv.v) + (kv.s ? "<small>" + esc(kv.s) + "</small>" : "") + "</div>";
   h += foundLine(g);
   if (g.note) h += "<div class='note" + (g.plainNote || g.status === "guideline" ? " plain" : "") + "'>" + esc(g.note) + "</div>";
+  if (g.also) h += "<div class='note plain'>" + esc(g.also) + "</div>";
   if (needsFix(g)) h += "<div class='note plain'>" + fixLine(g) + "</div>";
   h += "<div class='irow'>" + callHtml(g) +
     "<button type='button' class='kwbtn'>" + n.toLocaleString() + (n === 1 ? " keyword" : " keywords") + "</button></div><div class='kwlist'>" + g.keys.map(esc).join("<br>") + "</div></div>";
@@ -2638,7 +2654,7 @@ const FIX_LINE = "Update the keyword or the Benefit Summary wording, whichever o
 const REVIEW_LINE = "If they don't agree, update the keyword or the Benefit Summary wording, whichever one is wrong.";
 const needsFix = g => g.status === "partial" || g.status === "notstated" || g.status === "mismatch";
 const fixLine = g => g.status === "mismatch" ? FIX_LINE : g.status === "partial" || g.status === "notstated" ? REVIEW_LINE : "";
-const noteFor = g => [g.note, fixLine(g)].filter(Boolean).join(" ");
+const noteFor = g => [g.note, g.also, fixLine(g)].filter(Boolean).join(" ");
 function foundLine(g){
   if (!g.found || !needsFix(g)) return "";
   const v = esc(keywordValue(g).v || "this");
@@ -2656,6 +2672,7 @@ function rowHtml(g, i){
   } else if (g.sec && f.type !== "limit") ws += "<div class='ws-where'><b>" + esc(g.sec.title) + "</b></div>";
   ws += foundLine(g);
   if (g.note) ws += "<div class='note" + (g.plainNote || g.status === "info" || g.status === "guideline" ? " plain" : "") + "'>" + esc(g.note) + "</div>";
+  if (g.also) ws += "<div class='note plain'>" + esc(g.also) + "</div>";
   if (needsFix(g)) ws += "<div class='note plain'>" + fixLine(g) + "</div>";
   let secCell = "";
   if (f.type === "limit") {
@@ -3235,7 +3252,7 @@ function exportExcel(){
     ...(counts.Review ? [["Review checks decided", state.groups.filter(g => isReview(g) && callOf(g)).length + " of " + counts.Review]] : []),
     ...(() => { const sc = state.groups.filter(g => g.status !== "info" && g.status !== "guideline"), m = sc.filter(g => shownNow(g) === "match").length;
       return sc.length ? [["Checks that match (with your Match calls)", m + " of " + sc.length + " (" + Math.round(m / sc.length * 100) + "%)"]] : []; })()];
-  (state.sumOnly || []).forEach((x, i) => sum.push([i ? "" : "In the Benefit Summary with no keyword check", x.title + ": " + x.text]));
+  (state.sumOnly || []).forEach((x, i) => sum.push([i ? "" : "In the Benefit Summary with no keyword check", x.title + ": " + x.text + (x.hint ? " (" + x.hint + ")" : "")]));
   const about = sheetXml(sum, [28, 60], (ri, ci) => ri === 0 ? 1 : ci === 0 ? 8 : 2, false);
   const files = [
     { name: "[Content_Types].xml", text: "<?xml version='1.0' encoding='UTF-8' standalone='yes'?><Types xmlns='http://schemas.openxmlformats.org/package/2006/content-types'><Default Extension='rels' ContentType='application/vnd.openxmlformats-package.relationships+xml'/><Default Extension='xml' ContentType='application/xml'/><Override PartName='/xl/workbook.xml' ContentType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml'/><Override PartName='/xl/worksheets/sheet1.xml' ContentType='application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml'/><Override PartName='/xl/worksheets/sheet2.xml' ContentType='application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml'/><Override PartName='/xl/styles.xml' ContentType='application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml'/></Types>" },
@@ -3303,7 +3320,7 @@ if (typeof DecompressionStream === "undefined") $("#note").textContent = "This b
 // Keep the notes short and plain: a few one-line items a reviewer would notice, no internals.
 // The page can't contact anything, so checking for an update reloads it fresh from GitHub
 // and then shows What's new, marking what changed since the version that was open.
-const APP_VERSION = "1.5", APP_BUILD = 26, APP_DATE = "Nov 22, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
+const APP_VERSION = "1.6", APP_BUILD = 27, APP_DATE = "Nov 22, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
 const CHANGELOG = [
   { v: APP_VERSION, date: APP_DATE, items: ["Bug fixes and improvements."] }
 ];
