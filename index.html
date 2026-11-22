@@ -19,7 +19,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-wGofQzvOjANt2Kf95eNP/17cyIpTk0Xik47kuw2Mi84='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-m6fLwIVv4WNFG6J41NI8cOBnJtRzelYmQ7Gss3JHDWA='; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="color-scheme" content="dark">
 <meta name="referrer" content="no-referrer">
 <meta name="google" content="notranslate">
@@ -234,6 +234,12 @@
   .wsrow .box{color:var(--cyan);font-weight:700}
   mark.n{background:rgba(34,211,238,.15);color:#A5F3FF;padding:0 2px;border-radius:3px}
   @media (max-width:1000px){.scols{grid-template-columns:1fr}}
+  .extra{margin-top:18px;border:1px solid var(--line-2);border-radius:14px;background:rgba(13,18,27,.72);padding:4px 18px}
+  .extra summary{cursor:pointer;padding:12px 0;font:600 15px var(--display);color:var(--text)}
+  .extra p{margin:0 0 12px;color:var(--muted);font-size:14px;line-height:1.5;max-width:900px}
+  .so-row{padding:10px 0;border-top:1px solid var(--line);font-size:14px;line-height:1.45}
+  .so-row b{display:block;color:var(--text);font-weight:600;margin-bottom:2px}
+  .so-row span{color:var(--muted)}
   .help{margin-top:30px;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
   .help div{border:1px solid var(--line);border-radius:16px;padding:18px 20px;background:rgba(13,18,27,.6);font-size:15px;color:var(--muted)}
   .help b{display:block;color:var(--text);font:700 16px var(--display);margin-bottom:6px}
@@ -301,6 +307,7 @@
         <div class="seg" id="viewSeg" role="group" aria-label="View"><button type="button" data-v="list" class="on" aria-pressed="true">List</button><button type="button" data-v="sec" aria-pressed="false">By section</button></div>
         <div class="search"><input type="text" id="q" placeholder="Filter checks or keywords"></div>
         <button id="csvBtn">Export to Excel</button>
+        <button id="callsBtn" class="linkbtn" type="button" style="margin:0" title="Pick a past Export to Excel file to bring back the Match and Mismatch calls you made in it">Load my calls</button><input type="file" id="fileCalls" accept=".xlsx" hidden>
       </div>
     </div>
     <div class="tablewrap" id="tablewrap">
@@ -310,6 +317,11 @@
       </table>
     </div>
     <div id="secView" style="display:none"></div>
+    <details id="sumOnly" class="extra" style="display:none">
+      <summary id="sumOnlyTitle"></summary>
+      <p>These sections of the Benefit Summary state a limit, and no keyword in the export was checked against them. That can be fine: not every limit is set up as a keyword, and one may be counted under a counter the tool tied to another section. It is a list to look over and does not change the results above.</p>
+      <div id="sumOnlyList"></div>
+    </details>
   </section>
 
   <div class="help">
@@ -1840,7 +1852,7 @@ const SERVICE_HINTS = [
   [/HPV/, /\bhpv\b/], [/OSTEO/, /osteopor|bone density/], [/LIPID/, /lipid|cholesterol/], [/HIV/, /\bhiv\b/], [/CHLMYD/, /chlamydia/],
   [/GONORR/, /gonorrh/], [/SYPH/, /syphilis/], [/HEPAT|HEPTB/, /hepatitis/], [/BRSTFEED|BRPUMP/, /breast ?(feed|pump)|lactation/],
   [/LUNGC/, /lung cancer/], [/DEPRESS/, /depression/], [/ALCOHOL/, /alcohol/], [/WELLWO/, /well[- ]?wom[ae]n/], [/GYN/, /\bgyn/],
-  [/RTNPHYS/, /routine physical|annual physical|adult physical|physical exam|wellness (exam|visit)/], [/HABIL?SP|HABSP|HABST/, /\b(st|speech therap\w*)\b/], [/DIASCRPR|GESTDIA/, /gestational diabetes/], [/DIASCR/, /diabetes screen|screening for diabetes/], [/EYEEX|EYEXAM|RTEYE/, /\beye exams?\b/], [/GLASS|LENS/, /glasses|lenses/], [/CONTACT/, /contact lens|contacts/],
+  [/RTNPHYS/, /routine physical|annual physical|adult physical|physical exam|wellness (exam|visit)/], [/HABIL?SP|HABSP|HABST/, /\b(st|speech therap\w*)\b/], [/IMPHEAR|BRAINST|^ABI/, /implant/], [/DIASCRPR|GESTDIA/, /gestational diabetes/], [/DIASCR/, /diabetes screen|screening for diabetes/], [/EYEEX|EYEXAM|RTEYE/, /\beye exams?\b/], [/GLASS|LENS/, /glasses|lenses/], [/CONTACT/, /contact lens|contacts/],
   [/WIG/, /\bwigs?\b/], [/RETINO/, /retinopath/], [/VASECT/, /vasectom/], [/MASTEC/, /mastectomy|breast prosthe/], [/SUPORTH|SUPPHOSE|STOCKING/, /stocking|support hose/],
   [/BARIAT|OBESLIF/, /bariatric/], [/HEARAID/, /hearing aid/], [/INFERT/, /infertil/], [/OBULTR/, /ultrasound/], [/COCHL/, /cochlear/], [/BAHA|OSSEO/, /osseointegrat/],
   [/^PTTHER|PHYSTH/, /\b(pt|physical therap\w*)\b/], [/^OTTHER|OCCTH/, /\b(ot|occupational therap\w*)\b/], [/^STTHER|SPCHTH|SPEECH/, /\b(st|speech therap\w*)\b/]
@@ -1883,8 +1895,8 @@ const planSentences = r => r.n.split(SENT_SPLIT).filter(sn => { const p = planOf
 const rowPairs = rows => rows.flatMap(r => planSentences(r).map(ph => ({ r, ph })));
 // A sentence typed across several lines of a cell ("...and contact lenses or / up to two pairs of prescription glasses /
 // following cataract surgery...") is one sentence: a line that ends or starts with a joining word continues it.
-const MID_END = /(?:\b(?:or|and|of|the|to|a|an|with|for|in|on|by|per|including|following|after|within|from|that|which|is|are|be)|,)$/;
-const MID_START = /^(?:following|after|within|if|when|and|or|per|for|of|to|in|including|except|unless|provided|as|that|which|with)\b/;
+const MID_END = /(?:\b(?:or|and|of|the|to|a|an|with|for|in|on|by|per|every|each|including|following|after|within|from|that|which|is|are|be)|,)$/;
+const MID_START = /^(?:following|after|within|if|when|and|or|per|every|each|for|of|to|in|including|except|unless|provided|as|that|which|with)\b/;
 function wholeSentences(r){
   if (!r._ws) r._ws = r.n.split(/;\s+|\.\s+|\s+\|\s+/).flatMap(sn => { const out = [];
     for (const p of sn.split(/\s+\/\s+/)) { if (out.length && (MID_END.test(out[out.length - 1]) || MID_START.test(p))) out[out.length - 1] += " " + p; else out.push(p); }
@@ -2023,7 +2035,17 @@ function checkLimit0(f, g, sec){
     if (bestState === "same" && f.period && f.period.kind === "days" && statedPeriods(bestPh + " " + periodText(best, bestPh)).some(x => x.kind === "event" && x.what === "trip"))
       unitNote = (unitNote ? unitNote + " " : "") + "The Benefit Summary says per trip. Keywords can't count per trip, so per day is the same.";
     if (bestState === "same") return { status: "match", sec: s, row: best, hl: hlx, link, note: unitNote, plainNote: true };
-    if (bestState === "unstated") return { status: "match", sec: s, row: best, hl: hlx, link, note: (unitNote ? unitNote + " " : "") + "The Benefit Summary doesn't state a time period for this.", plainNote: true };
+    if (bestState === "unstated") {
+      // No time period in the Benefit Summary: a yearly keyword is the usual reading, and a lifetime keyword fits a
+      // one-time benefit ("initial pair following cataract surgery", "5 days or until mother's discharge"). Any other
+      // pairing can't be told from the wording, so a person checks the period.
+      const p = f.period, ctx = bestPh + " " + best.labelN + " " + s.tn;
+      const oneTime = /\binitial\b|\bone[- ]time\b|\bnewborn\b|\buntil [^.]{0,25}discharge|\b(following|after) [a-z ]{0,30}(surgery|mastectomy|transplant)\b|\bper (confinement|admission|stay|birth|pregnancy|occurrence|incident|injury|accident|surgery|transplant|trip)\b/.test(ctx);
+      const yearly = !p || (p.kind === "years" && p.n === 1) || (p.kind === "months" && p.n === 12);
+      if (p && (oneTime ? p.kind !== "life" : !yearly)) return { status: "partial", sec: s, row: best, hl: hlx, link,
+        note: (unitNote ? unitNote + " " : "") + "The amount matches. The Benefit Summary " + (oneTime ? "reads as a one-time benefit" : "doesn't state a time period") + " and the keyword counts " + describePeriod(p) + ", so check the period." };
+      return { status: "match", sec: s, row: best, hl: hlx, link, note: (unitNote ? unitNote + " " : "") + "The Benefit Summary doesn't state a time period for this.", plainNote: true };
+    }
     const said = bestSaid || statedPeriods(bestPh)[0] || statedPeriods(periodText(best, bestPh))[0];
     return { status: "partial", sec: s, row: best, hl, link, note: "The amount matches, but the Benefit Summary says " + describePeriod(said) + "." };
   }
@@ -2504,8 +2526,35 @@ function shown(){
   // PPACA rows go last, so they don't bury the rows that need a look.
   return [...out.filter(([g]) => g.status !== "guideline"), ...out.filter(([g]) => g.status === "guideline")];
 }
+/* ---------- limits the Benefit Summary states that no keyword was checked against ---------- */
+// Information only: it never changes a status or the percentage. A section is listed when it states a limit with a
+// number and no keyword check landed in that section at all.
+function summaryOnly(){
+  if (!state.ws || !state.kw || !state.groups.length) return [];
+  const used = new Set(state.groups.filter(g => g.sec).map(g => g.sec.id));
+  const skip = /exclusion|coordination|subrogat|recover|eligib|timely filing|definitions?|prior approval|precert/;
+  const out = [];
+  for (const s of activeSections()) {
+    if (s.grid || s.intro || s.ppaca || s.virtual || used.has(s.id) || skip.test(s.tn) || DED_RE.test(s.tn) || OOP_RE.test(s.tn)) continue;
+    const rows = s.rows.filter(r => r.usable && !r.header && isLimitLabel(r) && !/\?\s*$/.test(r.labelN) && !/not handled in claims/.test(r.n) &&
+      !/^(no|none|n\/a|not applicable)\b/.test(norm(r.cells[1] || "")) && !(/\bnone\b/.test(r.n) && /\bother\b/.test(r.n)) &&
+      planPhrases(r).some(ph => countNums(ph).length || /\$\s?\d/.test(ph)));
+    if (rows.length) out.push({ title: s.title, text: rows.map(r => r.text).join(" / ") });
+  }
+  return out;
+}
+function renderSummaryOnly(){
+  const box = $("#sumOnly"); if (!box) return;
+  let list = []; try { list = summaryOnly(); } catch (e) { list = []; }
+  state.sumOnly = list;
+  box.style.display = list.length ? "" : "none";
+  if (!list.length) return;
+  $("#sumOnlyTitle").textContent = "In the Benefit Summary with no keyword check (" + list.length + ")";
+  $("#sumOnlyList").innerHTML = list.map(x => "<div class='so-row'><b>" + esc(x.title) + "</b><span>" + esc(x.text.length > 420 ? x.text.slice(0, 420) + "..." : x.text) + "</span></div>").join("");
+}
 function render(){
   renderChips();
+  renderSummaryOnly();
   document.querySelectorAll("#viewSeg button").forEach(b => { const on = b.dataset.v === state.view; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
   const list = shown(), bySec = state.view === "sec";
   $("#tablewrap").style.display = bySec ? "none" : "";
@@ -3186,6 +3235,7 @@ function exportExcel(){
     ...(counts.Review ? [["Review checks decided", state.groups.filter(g => isReview(g) && callOf(g)).length + " of " + counts.Review]] : []),
     ...(() => { const sc = state.groups.filter(g => g.status !== "info" && g.status !== "guideline"), m = sc.filter(g => shownNow(g) === "match").length;
       return sc.length ? [["Checks that match (with your Match calls)", m + " of " + sc.length + " (" + Math.round(m / sc.length * 100) + "%)"]] : []; })()];
+  (state.sumOnly || []).forEach((x, i) => sum.push([i ? "" : "In the Benefit Summary with no keyword check", x.title + ": " + x.text]));
   const about = sheetXml(sum, [28, 60], (ri, ci) => ri === 0 ? 1 : ci === 0 ? 8 : 2, false);
   const files = [
     { name: "[Content_Types].xml", text: "<?xml version='1.0' encoding='UTF-8' standalone='yes'?><Types xmlns='http://schemas.openxmlformats.org/package/2006/content-types'><Default Extension='rels' ContentType='application/vnd.openxmlformats-package.relationships+xml'/><Default Extension='xml' ContentType='application/xml'/><Override PartName='/xl/workbook.xml' ContentType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml'/><Override PartName='/xl/worksheets/sheet1.xml' ContentType='application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml'/><Override PartName='/xl/worksheets/sheet2.xml' ContentType='application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml'/><Override PartName='/xl/styles.xml' ContentType='application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml'/></Types>" },
@@ -3204,6 +3254,30 @@ function exportExcel(){
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
 }
 $("#csvBtn").onclick = exportExcel;
+/* ---------- bring back Match and Mismatch calls from a past Export to Excel ---------- */
+// The export already lists each check with "Your call". A call is put back only on a check that is the same check
+// (same title, counter, value and period) and is still a Review now.
+const callId = r => [r[2], r[3], r[4], r[5]].map(x => String(x ?? "").replace(/\s+/g, " ").trim().toLowerCase()).join("|");
+async function loadCalls(file){
+  try {
+    checkSize(file);
+    if (!/\.xlsx$/i.test(file.name)) throw new Error("Pick an Excel file made with Export to Excel.");
+    if (!state.groups.length) throw new Error("Load the Benefit Summary and the keyword export first.");
+    const sheets = await readXlsx(readZip(await file.arrayBuffer()));
+    const sh = sheets.find(x => x.rows.length && String(x.rows[0][0] || "").trim() === "Status" && String(x.rows[0][1] || "").trim() === "Your call");
+    if (!sh) throw new Error("That file isn't an export from this tool.");
+    const want = {}; let asked = 0;
+    for (const r of sh.rows.slice(1)) { const c = String(r[1] || "").trim(); if (c !== "Match" && c !== "Mismatch") continue; asked++; want[callId(r)] = c === "Match" ? "agree" : "differ"; }
+    if (!asked) throw new Error("That export has no Match or Mismatch calls in it.");
+    const now = tableData().slice(1); let put = 0;
+    state.groups.forEach((g, i) => { const c = want[callId(now[i])]; if (c && isReview(g)) { state.calls[callKey(g)] = c; put++; } });
+    render();
+    toast(put === asked ? "Brought back " + put + " call" + (put === 1 ? "" : "s") + "." : "Brought back " + put + " of " + asked + " calls. The rest are for checks that changed or are no longer a Review.");
+  } catch (e) { toast(e.message || "Could not read that file."); }
+}
+(() => { const b = $("#callsBtn"), inp = $("#fileCalls"); if (!b || !inp) return;
+  b.onclick = () => inp.click();
+  inp.onchange = () => { const f = inp.files && inp.files[0]; inp.value = ""; if (f) loadCalls(f); }; })();
 /* ---------- wire up ---------- */
 setupDrop("#dropWs", "#fileWs", loadWorksheet);
 setupDrop("#dropKw", "#fileKw", loadExport);
@@ -3229,7 +3303,7 @@ if (typeof DecompressionStream === "undefined") $("#note").textContent = "This b
 // Keep the notes short and plain: a few one-line items a reviewer would notice, no internals.
 // The page can't contact anything, so checking for an update reloads it fresh from GitHub
 // and then shows What's new, marking what changed since the version that was open.
-const APP_VERSION = "1.4", APP_BUILD = 25, APP_DATE = "Nov 20, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
+const APP_VERSION = "1.5", APP_BUILD = 26, APP_DATE = "Nov 22, 2026", HOSTED_URL = "https://klhenryx.github.io/keyword-review/";
 const CHANGELOG = [
   { v: APP_VERSION, date: APP_DATE, items: ["Bug fixes and improvements."] }
 ];
